@@ -1,0 +1,38 @@
+version: "3.9"
+
+services:
+  # ────────────────────────────────────────────────
+  # PostgreSQL — our database
+  # This runs a postgres container so you don't need
+  # to install Postgres on your machine manually.
+  # ────────────────────────────────────────────────
+  db:
+    image: postgres:15
+    restart: always
+    environment:
+      POSTGRES_USER: chaindeploy
+      POSTGRES_PASSWORD: chaindeploy_secret
+      POSTGRES_DB: chaindeploy_db
+    ports:
+      - "5432:5432"        # expose postgres on localhost:5432
+    volumes:
+      - postgres_data:/var/lib/postgresql/data  # persist data between restarts
+
+  # ────────────────────────────────────────────────
+  # FastAPI Backend
+  # ────────────────────────────────────────────────
+  backend:
+    build: ./backend
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql://chaindeploy:chaindeploy_secret@db:5432/chaindeploy_db
+    volumes:
+      - ./backend:/app          # hot reload: changes reflect instantly
+      - /var/run/docker.sock:/var/run/docker.sock  # lets the backend control Docker!
+    depends_on:
+      - db
+
+volumes:
+  postgres_data:
