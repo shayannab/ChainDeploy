@@ -114,7 +114,7 @@ async def deploy_app(
     os.makedirs(app_dir, exist_ok=True)
 
     # ── Step 2: Validate it's a ZIP file ────────────────
-    if not file.filename.endswith(".zip"):
+    if not (file.filename or "").endswith(".zip"):
         raise HTTPException(status_code=400, detail="Only .zip files are accepted")
 
     # ── Step 3: Save the ZIP to disk ────────────────────
@@ -153,7 +153,7 @@ async def deploy_app(
     deployment = models.Deployment(
         project_name=project_name,
         deploy_type=deploy_type.value,
-        status=models.DeploymentStatus.BUILDING,
+        status=models.DeploymentStatus.BUILDING.value,
         image_name=image_name,
     )
     db.add(deployment)
@@ -161,32 +161,48 @@ async def deploy_app(
     db.refresh(deployment)  # reload to get the auto-generated id
 
     # ── Step 7: Generate and write the Dockerfile ───────
-    dockerfile_content, container_port = generate_dockerfile(deploy_type)
+    dockerfile_content, container_port = generate_dockerfile(deploy_type, app_dir)
+
     dockerfile_path = os.path.join(app_dir, "Dockerfile")
-    with open(dockerfile_path, "w") as f:
+    # FIX: Use encoding="utf-8" for Windows compatibility
+    with open(dockerfile_path, "w", encoding="utf-8") as f:
         f.write(dockerfile_content)
 
     # ── Step 8: Build the Docker image ──────────────────
     # subprocess.run() runs a shell command and waits for it to finish
     # capture_output=True captures stdout/stderr so we can read them
-    build_result = subprocess.run(
-        ["docker", "build", "-t", image_name, "."],
-        cwd=app_dir,                  # run the command FROM the app_dir
-        capture_output=True,
-        text=True,                    # return output as string, not bytes
-        timeout=300                   # max 5 minutes to build
-    )
-
-    if build_result.returncode != 0:
-        # Build failed — save the error and mark as FAILED
-        # .value converts the enum to its string: DeploymentStatus.FAILED → "FAILED"
-        # This is needed because the DB column is a plain String, not an Enum column
+    try:
+        build_result = subprocess.run(
+            ["docker", "build", "-t", image_name, "."],
+            cwd=app_dir,                  # run the command FROM the app_dir
+            capture_output=True,
+            text=True,                    # return output as string, not bytes
+            timeout=600                   # max 10 minutes to build
+        )
+    except subprocess.TimeoutExpired as e:
+        # FIX: Use .value to convert enum to string
         deployment.status = models.DeploymentStatus.FAILED.value
-        deployment.error = build_result.stderr[-1000:]  # last 1000 chars of error
+        deployment.error = f"Docker build timed out after 10 minutes. Please ensure your dependencies are correct."
         db.commit()
         raise HTTPException(
             status_code=500,
-            detail=f"Docker build failed: {build_result.stderr[-500:]}"
+            detail="Docker build timed out."
+        )
+    except Exception as e:
+        deployment.status = models.DeploymentStatus.FAILED.value
+        deployment.error = str(e)
+        db.commit()
+        raise HTTPException(status_code=500, detail=str(e))
+
+    if build_result.returncode != 0:
+        # Build failed — save the error and mark as FAILED
+        # FIX: Use .value to convert enum to string
+        deployment.status = models.DeploymentStatus.FAILED.value
+        deployment.error = str(build_result.stderr or "")[-1000:]  # last 1000 chars of error
+        db.commit()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Docker build failed: {str(build_result.stderr or '')[-500:]}"
         )
 
     # ── Step 9: Find a free host port ───────────────────
@@ -212,6 +228,7 @@ async def deploy_app(
     )
 
     if run_result.returncode != 0:
+        # FIX: Use .value to convert enum to string
         deployment.status = models.DeploymentStatus.FAILED.value
         deployment.error = run_result.stderr
         db.commit()
@@ -224,6 +241,7 @@ async def deploy_app(
     container_id = run_result.stdout.strip()   # Docker prints the container ID
     url = f"http://localhost:{host_port}"
 
+    # FIX: Use .value to convert enum to string
     deployment.status = models.DeploymentStatus.RUNNING.value
     deployment.port = host_port
     deployment.container_id = container_id
@@ -241,8 +259,7 @@ async def deploy_app(
         "status": deployment.status,
         "url": url,
         "port": host_port,
-        # Guard against empty container_id with 'or ""'
-        "container_id": (container_id or "")[:12],
+        "container_id": str(container_id)[:12],
     }
 
 

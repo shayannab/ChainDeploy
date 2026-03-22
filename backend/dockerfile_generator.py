@@ -1,27 +1,62 @@
 # ─────────────────────────────────────────────────────────
 # dockerfile_generator.py
-# 
-# Takes a DeploymentType and produces a Dockerfile string.
-# This is literally one of the most important files in the project —
-# it's the part that makes us a "deployment platform".
 #
-# We return a multi-line string (triple quotes in Python)
-# that we then write to disk as a file called "Dockerfile"
-# inside the user's extracted project folder.
+# Generates a Dockerfile string based on the project type.
+# Now accepts `app_dir` so it can inspect package.json and
+# produce framework-aware, multi-stage Dockerfiles for:
+#   • Next.js          → build → next start
+#   • Vite / React     → build → serve dist/
+#   • CRA              → build → serve build/
+#   • Generic Node     → optional build → npm start
+#   • Hardhat / Foundry / Truffle → unchanged
+#   • Python           → pip install → run app
+#   • Static HTML      → http-server
 # ─────────────────────────────────────────────────────────
+
+import os
+import json
 
 from models import DeploymentType
 
 
-def generate_dockerfile(deploy_type: DeploymentType) -> tuple[str, int]:
+# ── Helpers ───────────────────────────────────────────────
+
+def _read_pkg(app_dir: str) -> dict:
+    """Safely read and return the parsed package.json, or {}."""
+    if not app_dir:
+        return {}
+    try:
+        with open(os.path.join(app_dir, "package.json")) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _has_dep(pkg: dict, *names) -> bool:
+    """True if any of `names` appear in dependencies or devDependencies."""
+    deps = {**pkg.get("dependencies", {}), **pkg.get("devDependencies", {})}
+    return any(n in deps for n in names)
+
+
+def _has_script(pkg: dict, script: str) -> bool:
+    """True if package.json defines the given npm script."""
+    return script in pkg.get("scripts", {})
+
+
+# ── Main function ─────────────────────────────────────────
+
+def generate_dockerfile(deploy_type: DeploymentType, app_dir: str = None) -> tuple[str, int]:
     """
-    Returns (dockerfile_content, internal_container_port).
-    The port is the port INSIDE the container the app listens on.
+    Returns (dockerfile_content, container_port).
+
+    app_dir  — path to the extracted project folder (used to inspect package.json).
+               Passing None falls back to the old generic behaviour.
     """
 
+    pkg = _read_pkg(app_dir)
+
+    # ── Hardhat ───────────────────────────────────────────
     if deploy_type == DeploymentType.HARDHAT:
-        # Hardhat node runs a local Ethereum blockchain on port 8545
-        # Developers can then connect MetaMask or scripts to this RPC endpoint
         return (
             """FROM node:18-alpine
 WORKDIR /app
@@ -31,12 +66,11 @@ COPY . .
 EXPOSE 8545
 CMD ["npx", "hardhat", "node", "--hostname", "0.0.0.0"]
 """,
-            8545
+            8545,
         )
 
+    # ── Foundry ───────────────────────────────────────────
     elif deploy_type == DeploymentType.FOUNDRY:
-        # Anvil is Foundry's local test chain — faster than Hardhat
-        # It also runs on port 8545 (same Ethereum JSON-RPC standard)
         return (
             """FROM ghcr.io/foundry-rs/foundry:latest
 WORKDIR /app
@@ -44,12 +78,11 @@ COPY . .
 EXPOSE 8545
 CMD ["anvil", "--host", "0.0.0.0"]
 """,
-            8545
+            8545,
         )
 
+    # ── Truffle ───────────────────────────────────────────
     elif deploy_type == DeploymentType.TRUFFLE:
-        # Truffle's develop command starts a local blockchain + console
-        # We expose it via ganache (the underlying chain)
         return (
             """FROM node:18-alpine
 WORKDIR /app
@@ -60,28 +93,102 @@ COPY . .
 EXPOSE 9545
 CMD ["sh", "-c", "truffle develop 2>&1"]
 """,
-            9545
+            9545,
         )
 
-    elif deploy_type == DeploymentType.WEB3_REACT:
-        # Web3 React dApps use Vite or CRA — try `vite` first, fall back to react-scripts
-        # The dev server exposes port 5173 (Vite default) or 3000 (CRA default)
-        return (
-            """FROM node:18-alpine
+    # ── Node.js / Web3 React ──────────────────────────────
+    # Both share the same logic — we inspect package.json to decide.
+    elif deploy_type in (DeploymentType.NODE, DeploymentType.WEB3_REACT):
+
+        is_nextjs    = _has_dep(pkg, "next")
+        is_vite      = _has_dep(pkg, "vite")
+        is_cra       = _has_dep(pkg, "react-scripts")
+        has_build    = _has_script(pkg, "build")
+        has_start    = _has_script(pkg, "start")
+
+        # ── Next.js ───────────────────────────────────────
+        if is_nextjs:
+            return (
+                """FROM node:18-alpine AS base
+WORKDIR /app
+
+# Install dependencies
+COPY package*.json ./
+RUN npm ci
+
+# Build the Next.js app
+COPY . .
+RUN npm run build
+
+EXPOSE 3000
+ENV NODE_ENV=production
+CMD ["npm", "start"]
+""",
+                3000,
+            )
+
+        # ── Vite (React / Vue / Svelte / Web3 dApp) ───────
+        elif is_vite:
+            return (
+                """FROM node:18-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+# ── Production image ──────────────────────────────────────
+FROM node:18-alpine AS runner
+WORKDIR /app
+RUN npm install -g serve
+COPY --from=builder /app/dist ./dist
+EXPOSE 3000
+CMD ["serve", "-s", "dist", "-l", "3000"]
+""",
+                3000,
+            )
+
+        # ── Create React App ───────────────────────────────
+        elif is_cra:
+            return (
+                """FROM node:18-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+# ── Production image ──────────────────────────────────────
+FROM node:18-alpine AS runner
+WORKDIR /app
+RUN npm install -g serve
+COPY --from=builder /app/build ./build
+EXPOSE 3000
+CMD ["serve", "-s", "build", "-l", "3000"]
+""",
+                3000,
+            )
+
+        # ── Generic Node with build + start scripts ────────
+        elif has_build and has_start:
+            return (
+                """FROM node:18-alpine
 WORKDIR /app
 COPY package*.json ./
 RUN npm install
 COPY . .
-EXPOSE 5173
-CMD ["sh", "-c", "npm run dev -- --host 0.0.0.0 2>/dev/null || npm start"]
+# Run the build step (compiles TS, bundles, etc.)
+RUN npm run build
+EXPOSE 3000
+CMD ["npm", "start"]
 """,
-            5173
-        )
+                3000,
+            )
 
-    elif deploy_type == DeploymentType.NODE:
-        # Generic Node.js app — assume npm start on port 3000
-        return (
-            """FROM node:18-alpine
+        # ── Pure Node server (no build step) ──────────────
+        else:
+            return (
+                """FROM node:18-alpine
 WORKDIR /app
 COPY package*.json ./
 RUN npm install
@@ -89,11 +196,11 @@ COPY . .
 EXPOSE 3000
 CMD ["npm", "start"]
 """,
-            3000
-        )
+                3000,
+            )
 
+    # ── Python ────────────────────────────────────────────
     elif deploy_type == DeploymentType.PYTHON:
-        # Python app — look for app.py or main.py, install from requirements.txt
         return (
             """FROM python:3.11-slim
 WORKDIR /app
@@ -101,13 +208,14 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 EXPOSE 5000
+# Try Flask-style app.py, then FastAPI main.py, then uvicorn as last resort
 CMD ["sh", "-c", "python app.py 2>/dev/null || python main.py 2>/dev/null || uvicorn main:app --host 0.0.0.0 --port 5000"]
 """,
-            5000
+            5000,
         )
 
+    # ── Static HTML ───────────────────────────────────────
     else:
-        # Static HTML — serve with http-server on port 8080
         return (
             """FROM node:18-alpine
 WORKDIR /app
@@ -116,5 +224,5 @@ COPY . .
 EXPOSE 8080
 CMD ["http-server", "-p", "8080", "--cors"]
 """,
-            8080
+            8080,
         )
