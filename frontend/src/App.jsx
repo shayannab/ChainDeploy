@@ -25,15 +25,17 @@ function ConfirmationModal({ isOpen, onCancel, onConfirm, title, description }) 
   )
 }
 
+import { Hammer, Wrench, Package, Atom, Code, FileCode, Globe, Sun, Moon, Sparkles, FolderArchive, ScanSearch, Zap, MapPin, Rocket } from 'lucide-react'
+
 // ── Type badge config ─────────────────────────────────────
 const TYPE_CONFIG = {
-  'Hardhat':    { label: 'Hardhat',     cls: 'hardhat',   icon: '⛏️'  },
-  'Foundry':    { label: 'Foundry',     cls: 'foundry',   icon: '🔧'  },
-  'Truffle':    { label: 'Truffle',     cls: 'truffle',   icon: '🍫'  },
-  'Web3 React': { label: 'Web3 React',  cls: 'web3react', icon: '⚛️'  },
-  'Node.js':    { label: 'Node.js',     cls: 'static',    icon: '🟩'  },
-  'Python':     { label: 'Python',      cls: 'python',    icon: '🐍'  },
-  'Static HTML':{ label: 'Static HTML', cls: 'static',    icon: '🌐'  },
+  'Hardhat':    { label: 'Hardhat',     cls: 'hardhat',   icon: <Hammer size={14} />  },
+  'Foundry':    { label: 'Foundry',     cls: 'foundry',   icon: <Wrench size={14} />  },
+  'Truffle':    { label: 'Truffle',     cls: 'truffle',   icon: <Package size={14} />  },
+  'Web3 React': { label: 'Web3 React',  cls: 'web3react', icon: <Atom size={14} />  },
+  'Node.js':    { label: 'Node.js',     cls: 'static',    icon: <Code size={14} />  },
+  'Python':     { label: 'Python',      cls: 'python',    icon: <FileCode size={14} />  },
+  'Static HTML':{ label: 'Static HTML', cls: 'static',    icon: <Globe size={14} />  },
 }
 
 const SCATTERED_TECH = [
@@ -153,7 +155,7 @@ function ProjectDetails({ project, onBack, onDelete }) {
           <div>
             <h1>{project.project_name}</h1>
             <div style={{ display: 'flex', gap: '12px', marginTop: '12px' }}>
-              <span className={`type-badge ${typeInfo.cls}`}>{typeInfo.icon} {typeInfo.label}</span>
+              <span className={`type-badge ${typeInfo.cls}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>{typeInfo.icon} {typeInfo.label}</span>
               <span className={`status-dot ${statusClass(project.status)}`}>{project.status}</span>
             </div>
           </div>
@@ -312,7 +314,7 @@ export default function App() {
           </div>
           <div className="nav-actions">
             <button className="btn-theme-toggle" onClick={() => setDarkMode(!darkMode)}>
-              {darkMode ? '☀️' : '🌙'}
+              {darkMode ? <Sun size={20} /> : <Moon size={20} />}
             </button>
             <span className="nav-badge">BETA · V1</span>
           </div>
@@ -326,7 +328,7 @@ export default function App() {
               <ScatteredTech />
               <div className="hero-content">
                 <div className="hero-eyebrow">
-                  <span>✦</span> The Web3 Deployment Platform
+                  <Sparkles size={14} style={{ color: 'var(--primary)', marginRight: '4px' }} /> The Web3 Deployment Platform
                 </div>
                 <h1>
                   Ship <span className="highlight-cyan">dApps</span> in minutes,<br />
@@ -396,17 +398,17 @@ export default function App() {
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '32px' }}>
                 <div className="details-card">
-                  <div style={{ fontSize: '2rem', marginBottom: '16px' }}>📂</div>
+                  <div style={{ color: 'var(--primary)', marginBottom: '16px' }}><FolderArchive size={32} /></div>
                   <h3>1. Zip & Drop</h3>
                   <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Compress your project. Drag it in. We take it from there.</p>
                 </div>
                 <div className="details-card">
-                  <div style={{ fontSize: '2rem', marginBottom: '16px' }}>🔍</div>
+                  <div style={{ color: 'var(--primary)', marginBottom: '16px' }}><ScanSearch size={32} /></div>
                   <h3>2. Auto-Detect</h3>
                   <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>We scan your codebase and spin up the perfect Docker build automatically. Node, Python, Rust, Go—we know them all.</p>
                 </div>
                 <div className="details-card">
-                  <div style={{ fontSize: '2rem', marginBottom: '16px' }}>⚡</div>
+                  <div style={{ color: 'var(--primary)', marginBottom: '16px' }}><Zap size={32} /></div>
                   <h3>3. Instant Live</h3>
                   <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Your dApp is live on 20+ edge regions. mTLS, SSL, DDoS protection included. Your users see sub-100ms latency.</p>
                 </div>
@@ -429,7 +431,7 @@ export default function App() {
                   </div>
                   <div className="dotted-map">
                     <div className="map-marker">
-                      <span>🇯🇵</span>
+                      <MapPin size={16} />
                       <span style={{ fontWeight: 600 }}>Tokyo, JP</span>
                       <span style={{ color: 'var(--accent-green)' }}>●</span>
                     </div>
@@ -494,7 +496,7 @@ export default function App() {
               </div>
               {deployments.length === 0 ? (
                 <div className="empty-state" style={{ textAlign: 'center', padding: '60px 24px', background: 'var(--bg-card)', borderRadius: '24px', border: '1px dashed var(--border)' }}>
-                  <div className="icon" style={{ fontSize: '3rem', marginBottom: '16px' }}>🛸</div>
+                  <div className="icon" style={{ marginBottom: '16px', color: 'var(--text-muted)' }}><Rocket size={48} /></div>
                   <h3 style={{ fontSize: '1.25rem', marginBottom: '8px' }}>No deployments yet.</h3>
                   <p style={{ color: 'var(--text-muted)', marginBottom: '24px', maxWidth: '400px', margin: '0 auto 24px' }}>
                     Create one and watch the magic happen. Deploy any Node, Python, Rust, or Go project in under 60 seconds.

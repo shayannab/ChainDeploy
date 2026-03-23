@@ -4,6 +4,8 @@
    monospace for code elements, Inter for UI text.
    ═══════════════════════════════════════════════════════════ */
 
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800&family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
 /* ── CSS Variables (design tokens) ──────────────────────── */
 :root {
   /* ── Noir Mode (Default) ────────────────────────── */
@@ -12,11 +14,11 @@
   --bg-card:       rgba(20, 20, 20, 0.6);
   --bg-card-hover: rgba(30, 30, 30, 0.8);
 
-  --primary:       #00f2ff;
+  --primary:       #888888;
   --secondary:     #9d4edd;
   
   /* Colorful Palette Highlights */
-  --hl-cyan:       linear-gradient(135deg, #00f2ff, #0061ff);
+  --hl-cyan:       linear-gradient(135deg, #a1a1aa, #52525b);
   --hl-purple:     linear-gradient(135deg, #9d4edd, #ff00c8);
   --hl-orange:     linear-gradient(135deg, #ff9e00, #ff0000);
   --hl-green:      linear-gradient(135deg, #00ff87, #60efff);
@@ -30,7 +32,7 @@
   --text-muted:     #6f7586;
 
   --border:       rgba(255, 255, 255, 0.08);
-  --border-hover: rgba(0, 242, 255, 0.3);
+  --border-hover: rgba(136, 136, 136, 0.3);
 
   --font-ui:   'Inter', system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
@@ -39,7 +41,7 @@
   --radius-md: 12px;
   --radius-lg: 24px;
 
-  --shadow-glow: 0 0 30px rgba(0, 242, 255, 0.1);
+  --shadow-glow: 0 0 30px rgba(136, 136, 136, 0.1);
   --shadow-card: 0 8px 32px rgba(0, 0, 0, 0.4);
   --glass-blur: blur(12px);
 }
@@ -51,8 +53,8 @@
   --bg-card:       #ffffff;
   --bg-card-hover: #fafafa;
 
-  --primary:       #0891b2;
-  --primary-glow:  rgba(8, 145, 178, 0.1);
+  --primary:       #555555;
+  --primary-glow:  rgba(85, 85, 85, 0.1);
   --secondary:     #7c3aed;
   --secondary-glow: rgba(124, 58, 237, 0.1);
 
@@ -61,14 +63,11 @@
   --text-muted:     #94a3b8;
 
   --border:       rgba(0, 0, 0, 0.08);
-  --border-hover: rgba(8, 145, 178, 0.3);
+  --border-hover: rgba(85, 85, 85, 0.3);
 
   --shadow-card: 0 4px 12px rgba(0, 0, 0, 0.05);
   --glass-blur: none;
 }
-
-@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800&family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap');
-
 /* ── Global Styles ───────────────────────────────────────── */
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body { font-family: 'Inter', sans-serif; -webkit-font-smoothing: antialiased; }
@@ -84,8 +83,8 @@ body {
   line-height: 1.6;
   /* Subtle grid mesh background */
   background-image:
-    linear-gradient(rgba(0,212,255,0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(0,212,255,0.03) 1px, transparent 1px);
+    linear-gradient(rgba(136, 136, 136, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(136, 136, 136, 0.04) 1px, transparent 1px);
   background-size: 40px 40px;
 }
 
@@ -110,6 +109,7 @@ body {
 .btn-theme-toggle {
   background: var(--bg-card);
   border: 1px solid var(--border);
+  color: #888888;
   border-radius: 50%;
   width: 40px; height: 40px;
   display: flex; align-items: center; justify-content: center;
@@ -117,7 +117,8 @@ body {
   font-size: 1.2rem;
   transition: all 0.2s;
 }
-.btn-theme-toggle:hover { border-color: var(--primary); transform: scale(1.1); }
+.btn-theme-toggle:hover { border-color: #bbbbbb; transform: scale(1.1); color: #cccccc; }
+.light-mode .btn-theme-toggle:hover { border-color: #666666; color: #444444; }
 .logo {
   font-size: 1.4rem;
   font-weight: 700;
