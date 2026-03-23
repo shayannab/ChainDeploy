@@ -321,8 +321,17 @@ def get_logs(deployment_id: int, db: Session = Depends(database.get_db)):
         models.Deployment.id == deployment_id
     ).first()
 
-    if not deployment or not deployment.container_id:
+    if not deployment:
         raise HTTPException(status_code=404, detail="Deployment not found")
+
+    if deployment.status == models.DeploymentStatus.BUILDING.value:
+        return {"logs": "Building image... This typically takes 30-90 seconds. Please wait.\nFetching layers...\nInstalling dependencies...\nExecuting docker build..."}
+
+    if deployment.status == models.DeploymentStatus.FAILED.value:
+        return {"logs": f"Build Failed:\n\n{deployment.error or 'Unknown error occurred.'}"}
+
+    if not deployment.container_id:
+        return {"logs": "Container ID not set. Please contact support."}
 
     result = subprocess.run(
         ["docker", "logs", "--tail", "100", deployment.container_id],
