@@ -37,12 +37,12 @@ const TYPE_CONFIG = {
 }
 
 const SCATTERED_TECH = [
-  { name: 'Hardhat', icon: 'https://api.iconify.design/logos:hardhat-icon.svg', top: '8%', left: '5%', rot: '-8deg' },
-  { name: 'Foundry', icon: 'https://api.iconify.design/logos:foundry-icon.svg', top: '12%', right: '5%', rot: '6deg' },
-  { name: 'React', icon: 'https://api.iconify.design/logos:react.svg', bottom: '15%', left: '4%', rot: '5deg' },
-  { name: 'Truffle', icon: 'https://api.iconify.design/logos:truffle-icon.svg', bottom: '12%', right: '4%', rot: '-7deg' },
-  { name: 'Python', icon: 'https://api.iconify.design/logos:python.svg', top: '48%', left: '2%', rot: '-4deg' },
-  { name: 'HTML5', icon: 'https://api.iconify.design/logos:html-5.svg', top: '52%', right: '2%', rot: '10deg' },
+  { name: 'Python', icon: 'https://api.iconify.design/logos:python.svg', top: '8%', left: '8%', rot: '-8deg' },
+  { name: 'Foundry', icon: 'https://avatars.githubusercontent.com/u/98050634?s=200&v=4', top: '15%', right: '10%', rot: '6deg', style: { borderRadius: '16px' } },
+  { name: 'React', icon: 'https://api.iconify.design/logos:react.svg', bottom: '15%', left: '10%', rot: '5deg' },
+  { name: 'Rust', icon: 'https://api.iconify.design/logos:rust.svg', bottom: '20%', right: '8%', rot: '-7deg', style: { filter: 'drop-shadow(0 0 2px rgba(255,255,255,0.4))' } },
+  { name: 'Node.js', icon: 'https://api.iconify.design/logos:nodejs-icon.svg', top: '48%', left: '5%', rot: '-4deg' },
+  { name: 'Go', icon: 'https://api.iconify.design/logos:go.svg', top: '52%', right: '5%', rot: '10deg' },
 ]
 
 // ── Helper: get status CSS class ─────────────────────────
@@ -64,7 +64,7 @@ function ScatteredTech() {
             '--rot': t.rot
           }}
         >
-          <img src={t.icon} alt={t.name} />
+          <img src={t.icon} alt={t.name} style={t.style} />
           <span>{t.name}</span>
         </div>
       ))}
@@ -100,13 +100,15 @@ function DeploymentCard({ deployment, onDeleteRequest, onSelect }) {
 
   return (
     <div className="deployment-card-v3" onClick={() => onSelect(deployment)}>
-      <div className="card-v3-utils">
-        <button className="util-btn" title="Copy URL" onClick={copyUrl}><IconCopy /></button>
-        <button className="util-btn" title="Open Link" onClick={e => { e.stopPropagation(); window.open(deployment.url, '_blank') }}><IconExternal /></button>
-        <button className="util-btn" title="Delete Deployment" onClick={e => { e.stopPropagation(); onDeleteRequest(deployment.id) }}><IconDelete /></button>
+      <div className="card-v3-header">
+        <div className="card-v3-title">{deployment.project_name}</div>
+        <div className="card-v3-utils">
+          <button className="util-btn" title="Copy URL" onClick={copyUrl}><IconCopy /></button>
+          <button className="util-btn" title="Open Link" onClick={e => { e.stopPropagation(); window.open(deployment.url, '_blank') }}><IconExternal /></button>
+          <button className="util-btn" title="Delete Deployment" onClick={e => { e.stopPropagation(); onDeleteRequest(deployment.id) }}><IconDelete /></button>
+        </div>
       </div>
 
-      <div className="card-v3-title">{deployment.project_name}</div>
       
       <p className="card-v3-desc">
         Project status: <span className={deployment.status === 'RUNNING' ? 'highlight-cyan' : 'highlight-purple'}>{deployment.status}</span>. 
@@ -303,6 +305,11 @@ export default function App() {
       <div className="app">
         <nav className="navbar">
           <div className="logo">chain<span>Deploy</span></div>
+          <div className="nav-links" style={{ display: 'flex', gap: '32px', alignItems: 'center', flex: 1, justifyContent: 'center' }}>
+            <a href="#" className="nav-link" style={{ color: 'var(--text-secondary)', textDecoration: 'none', fontSize: '0.9rem', fontWeight: 500 }}>Features</a>
+            <a href="#" className="nav-link" style={{ color: 'var(--text-secondary)', textDecoration: 'none', fontSize: '0.9rem', fontWeight: 500 }}>Pricing</a>
+            <a href="#" className="nav-link" style={{ color: 'var(--text-secondary)', textDecoration: 'none', fontSize: '0.9rem', fontWeight: 500 }}>Docs</a>
+          </div>
           <div className="nav-actions">
             <button className="btn-theme-toggle" onClick={() => setDarkMode(!darkMode)}>
               {darkMode ? '☀️' : '🌙'}
@@ -322,71 +329,50 @@ export default function App() {
                   <span>✦</span> The Web3 Deployment Platform
                 </div>
                 <h1>
-                  Deploy <span className="highlight-cyan">Faster</span>,<br />
-                  Build <span className="highlight-purple">Bigger</span>.
+                  Ship <span className="highlight-cyan">dApps</span> in minutes,<br />
+                  not <span className="highlight-orange">weeks</span>.
                 </h1>
                 <p>
-                  A premium environment for your dApps. Containerized, 
-                  scalable, and live in <span className="highlight-orange" style={{ fontWeight: 600 }}>under 60 seconds</span>.
+                  Stop wrestling with infrastructure. chainDeploy turns your code into a production-grade, globally-distributed dApp in one click.
                 </p>
                 <div style={{ display: 'flex', gap: '16px', justifyContent: 'center' }}>
                   <button className="btn-deploy" onClick={() => document.getElementById('deploy-app').scrollIntoView({ behavior: 'smooth' })}>
-                    Get Started →
+                    Get Started
                   </button>
                 </div>
               </div>
             </section>
 
-            <div className="upload-card" id="deploy-app">
-              <div className="tech-upload-container">
+            <div 
+              className={`upload-card ${dragOver ? 'drag-over' : ''}`} 
+              id="deploy-app"
+            >
+              <div 
+                className="upload-dropzone" 
+                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                onDragLeave={(e) => { e.preventDefault(); setDragOver(false); }}
+                onDrop={handleDrop}
+                onClick={() => document.getElementById('file-input').click()}
+              >
                 <input type="file" accept=".zip" onChange={handleFileChange} id="file-input" style={{ display: 'none' }} />
-                <div className="upload-zone-overlay" onClick={() => document.getElementById('file-input').click()} />
                 
-                <div className="tech-header-row">
-                  <div className="tech-header-left">
-                    <div className="tech-arrows">»</div>
-                    <div className="tech-tab">
-                      {file ? 'READY FOR DEPLOY' : 'WAITING FOR SOURCE ..'}
-                    </div>
-                  </div>
-                  <div className="tech-flavor-text">
-                    SYSTEM STATUS: OK<br />
-                    ENCRYPTION: AES-256-GCM<br />
-                    NET: SECURE TUNNEL CLOUD-7
-                  </div>
+                <div style={{ textAlign: 'left', width: '100%', marginBottom: '24px' }}>
+                  <h3 style={{ fontSize: '1.2rem', marginBottom: '8px', color: 'var(--text-primary)' }}>Project Upload</h3>
+                  <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Supported formats: .ZIP</p>
                 </div>
 
-                <div className="tech-divider"></div>
-
-                <div className="tech-stats-grid">
-                  <div className="tech-stat-item">
-                    <div className="tech-stat-label">PROGRESS</div>
-                    <div className="tech-progress-track">
-                      <div className="tech-progress-fill" style={{ width: file ? '100%' : '0%' }}></div>
-                    </div>
+                <div className="upload-box-inner">
+                  <div style={{ marginBottom: '16px', background: 'var(--bg-card)', padding: '16px', borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
                   </div>
-                  <div className="tech-stat-item">
-                    <div className="tech-stat-label">EST. TIME</div>
-                    <div className="tech-stat-value">{file ? '0min 45sec' : '--'}</div>
+                  
+                  <div style={{ fontWeight: 600, fontSize: '1rem', marginBottom: '8px', color: 'var(--text-primary)' }}>
+                    Click to select
                   </div>
-                  <div className="tech-stat-item">
-                    <div className="tech-stat-label">FILES READY:</div>
-                    <div className="tech-stat-value">{file ? 'VALIDATED' : '0'}</div>
+                  <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
+                    {file ? `Selected: ${file.name}` : 'or drag and drop file here'}
                   </div>
                 </div>
-
-                <div className="tech-bottom-line"></div>
-                
-                {!file && (
-                  <p style={{ marginTop: '20px', color: '#888', fontSize: '0.8rem' }}>
-                    DRAG AND DROP YOUR .ZIP ARCHIVE HERE OR CLICK TO BROWSE
-                  </p>
-                )}
-                {file && (
-                  <p style={{ marginTop: '20px', color: 'var(--primary)', fontSize: '0.8rem', fontWeight: 600 }}>
-                    FILE DETECTED: {file.name.toUpperCase()} ({(file.size / 1024).toFixed(1)} KB)
-                  </p>
-                )}
               </div>
 
               <div className="form-row">
@@ -404,42 +390,42 @@ export default function App() {
 
             {/* ── New Sections ────────────────────────────────── */}
             <section style={{ padding: '80px 0', borderTop: '1px solid var(--border)' }}>
-              <div className="section-header" style={{ textAlign: 'center', marginBottom: '60px' }}>
-                <div className="hero-eyebrow">The Process</div>
-                <h2>Simple Flow. Zero Friction.</h2>
+              <div className="section-header" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', marginBottom: '60px' }}>
+                <div className="hero-eyebrow" style={{ marginBottom: '16px' }}>How it works</div>
+                <h2 style={{ margin: 0 }}>(it's stupidly easy)</h2>
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '32px' }}>
                 <div className="details-card">
                   <div style={{ fontSize: '2rem', marginBottom: '16px' }}>📂</div>
                   <h3>1. Zip & Drop</h3>
-                  <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Compress your project folder and drop it into our secure environment.</p>
+                  <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Compress your project. Drag it in. We take it from there.</p>
                 </div>
                 <div className="details-card">
                   <div style={{ fontSize: '2rem', marginBottom: '16px' }}>🔍</div>
                   <h3>2. Auto-Detect</h3>
-                  <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>We intelligently scan your files to configure the perfect Docker build.</p>
+                  <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>We scan your codebase and spin up the perfect Docker build automatically. Node, Python, Rust, Go—we know them all.</p>
                 </div>
                 <div className="details-card">
                   <div style={{ fontSize: '2rem', marginBottom: '16px' }}>⚡</div>
                   <h3>3. Instant Live</h3>
-                  <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Your app is live with a secure URL, ready for the world to see.</p>
+                  <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Your dApp is live on 20+ edge regions. mTLS, SSL, DDoS protection included. Your users see sub-100ms latency.</p>
                 </div>
               </div>
             </section>
 
             {/* ── Advanced Features (Tailark Style) ─────────────────── */}
             <section style={{ padding: '80px 0', borderTop: '1px solid var(--border)', background: 'var(--bg-primary)' }}>
-              <div className="section-header" style={{ textAlign: 'center', marginBottom: '60px' }}>
-                <div className="hero-eyebrow">Technical Excellence</div>
-                <h2>A Platform for Power Users.</h2>
+              <div className="section-header" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', marginBottom: '60px' }}>
+                <div className="hero-eyebrow" style={{ marginBottom: '16px' }}>Technical Excellence</div>
+                <h2 style={{ margin: 0 }}>A Platform for Power Users.</h2>
               </div>
               
               <div className="features-grid-tailark">
                 <div className="feature-box">
                   <div>
                     <div className="hero-eyebrow" style={{ fontSize: '10px', padding: '4px 10px', marginBottom: '12px' }}>Network</div>
-                    <h3>Global Connectivity</h3>
-                    <p>Deploy your dApps to 20+ edge regions for sub-100ms latency worldwide.</p>
+                    <h3>Global Deployment</h3>
+                    <p>Your dApp's live in Tokyo, Singapore, São Paulo before your coffee gets cold. Sub-100ms latency everywhere.</p>
                   </div>
                   <div className="dotted-map">
                     <div className="map-marker">
@@ -453,8 +439,8 @@ export default function App() {
                 <div className="feature-box">
                   <div>
                     <div className="hero-eyebrow" style={{ fontSize: '10px', padding: '4px 10px', marginBottom: '12px' }}>Support</div>
-                    <h3>Real-time Assistance</h3>
-                    <p>Developer-first support with instant terminal debugging and AI-aided fixes.</p>
+                    <h3>Real-time Debugging</h3>
+                    <p>Build fails at 2am? We show you exactly what broke. AI suggests the fix. One click to retry. Ship without waiting.</p>
                   </div>
                   <div className="chat-mock">
                     <div className="chat-bubble ai">Build failed: missing `process.env`.</div>
@@ -466,8 +452,8 @@ export default function App() {
                 <div className="feature-box full-width">
                   <div style={{ textAlign: 'center' }}>
                     <div className="hero-eyebrow" style={{ fontSize: '10px', padding: '4px 10px', marginBottom: '12px' }}>Reliability</div>
-                    <h3>Enterprise Performance</h3>
-                    <p style={{ margin: '0 auto' }}>Battle-tested architecture with redundant failovers and zero-downtime deployments.</p>
+                    <h3>Zero Downtime</h3>
+                    <p style={{ margin: '0 auto' }}>99.99% uptime isn't luck—it's architecture. Redundant failovers, automatic scaling, zero-downtime deploys. Sleep well.</p>
                   </div>
                   <div className="uptime-stat highlight-cyan">99.99%</div>
                   <div style={{ textAlign: 'center', fontSize: '0.8rem', color: 'var(--text-muted)', letterSpacing: '4px' }}>UPTIME STATUS : OPERATIONAL</div>
@@ -476,8 +462,8 @@ export default function App() {
                 <div className="feature-box">
                   <div>
                     <div className="hero-eyebrow" style={{ fontSize: '10px', padding: '4px 10px', marginBottom: '12px' }}>Insight</div>
-                    <h3>Activity Metrics</h3>
-                    <p>Monitor deployment frequency, container health, and traffic spikes in real-time.</p>
+                    <h3>Live Metrics</h3>
+                    <p>Know what your dApp is doing. Right now. Deployments, container health, traffic spikes—all on one dashboard.</p>
                   </div>
                   <div className="activity-chart">
                     {[40, 70, 45, 90, 65, 80, 55, 95, 60, 85].map((h, i) => (
@@ -489,8 +475,8 @@ export default function App() {
                 <div className="feature-box">
                   <div>
                     <div className="hero-eyebrow" style={{ fontSize: '10px', padding: '4px 10px', marginBottom: '12px' }}>Security</div>
-                    <h3>Isolated Runtime</h3>
-                    <p>Every deployment is sandboxed with mTLS, automated SSL, and firewall isolation.</p>
+                    <h3>Security by Default</h3>
+                    <p>mTLS. AES-256 encryption. Firewall rules. Every deployment is sandboxed by default. Your code's locked down.</p>
                   </div>
                   <div style={{ marginTop: 'auto', display: 'flex', gap: '8px' }}>
                     <span className="type-badge static">mTLS</span>
@@ -502,12 +488,21 @@ export default function App() {
             </section>
 
             <section>
-              <div className="section-header" style={{ textAlign: 'center', margin: '80px 0 40px' }}>
+              <div className="section-header" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', margin: '80px 0 40px' }}>
                 <div className="hero-eyebrow" style={{ marginBottom: '16px' }}>Dashboard</div>
-                <h2>Active Deployments <span style={{ opacity: 0.3, fontSize: '0.6em' }}>({deployments.length})</span></h2>
+                <h2 style={{ margin: 0 }}>Active Deployments <span style={{ opacity: 0.3, fontSize: '0.6em' }}>({deployments.length})</span></h2>
               </div>
               {deployments.length === 0 ? (
-                <div className="empty-state"><div className="icon">🛸</div><p>No deployments yet.</p></div>
+                <div className="empty-state" style={{ textAlign: 'center', padding: '60px 24px', background: 'var(--bg-card)', borderRadius: '24px', border: '1px dashed var(--border)' }}>
+                  <div className="icon" style={{ fontSize: '3rem', marginBottom: '16px' }}>🛸</div>
+                  <h3 style={{ fontSize: '1.25rem', marginBottom: '8px' }}>No deployments yet.</h3>
+                  <p style={{ color: 'var(--text-muted)', marginBottom: '24px', maxWidth: '400px', margin: '0 auto 24px' }}>
+                    Create one and watch the magic happen. Deploy any Node, Python, Rust, or Go project in under 60 seconds.
+                  </p>
+                  <button className="btn-deploy" onClick={() => document.getElementById('deploy-app').scrollIntoView({ behavior: 'smooth' })}>
+                    Deploy your first dApp
+                  </button>
+                </div>
               ) : (
                 <div className="deployments-grid">
                   {deployments.map(d => (
@@ -530,9 +525,58 @@ export default function App() {
               description="This action cannot be undone. This will permanently delete your project and remove all associated data from our edge servers."
             />
 
-            <footer style={{ padding: '60px 24px', textAlign: 'center', borderTop: '1px solid var(--border)', marginTop: '80px', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-              <div className="logo" style={{ marginBottom: '16px', opacity: 0.5 }}>chain<span>Deploy</span></div>
-              <p>© 2026 ChainDeploy. Built for the Decentralized Web.</p>
+            <footer className="site-footer">
+              <div className="footer-grid">
+                <div className="footer-brand">
+                  <div className="logo" style={{ marginBottom: '16px' }}>chain<span>Deploy</span></div>
+                  <p style={{ color: 'var(--text-muted)' }}>
+                    Behavioral Designed Activation<br />
+                    Journeys for PLG SaaS to lift<br />
+                    Aha! moments by 23%.
+                  </p>
+                </div>
+                <div className="footer-column">
+                  <h4>RESOURCES</h4>
+                  <a href="#">Freebies & Audits</a>
+                  <a href="#">Tools</a>
+                  <a href="#">Psychology</a>
+                  <a href="#">Blog <span className="status-badge">soon</span></a>
+                  <a href="#">Components <span className="status-badge">soon</span></a>
+                  <a href="#">Playbooks <span className="status-badge">soon</span></a>
+                </div>
+                <div className="footer-column">
+                  <h4>COMPANY <span className="status-badge">soon</span></h4>
+                  <a href="#">Mission</a>
+                  <a href="#">SaaS Ecosystem</a>
+                  <a href="#">Affiliate Program</a>
+                  <a href="#">Referral Program</a>
+                  <a href="#">Partners</a>
+                  <a href="#">About Us</a>
+                </div>
+                <div className="footer-column">
+                  <h4>COMPARE <span className="status-badge">soon</span></h4>
+                  <a href="#">DaaS</a>
+                  <a href="#">PLG Boutique</a>
+                  <a href="#">ProductLed</a>
+                  <a href="#">Vulnabyl</a>
+                  <a href="#">GrowthMates</a>
+                  <a href="#">DelightPath</a>
+                </div>
+              </div>
+              <div className="footer-bottom">
+                <div className="footer-copyright">
+                  ©2026 ChainDeploy. All rights reserved.
+                </div>
+                <div className="footer-links-row">
+                  <a href="#">Privacy Policy</a>
+                  <a href="#">Terms & Co</a>
+                  <a href="#">Contact Us</a>
+                </div>
+                <div className="footer-socials">
+                  <a href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 0h-14c-2.761 0-5 2.239-5 5v14c0 2.761 2.239 5 5 5h14c2.762 0 5-2.239 5-5v-14c0-2.761-2.238-5-5-5zm-11 19h-3v-11h3v11zm-1.5-12.268c-.966 0-1.75-.79-1.75-1.764s.784-1.764 1.75-1.764 1.75.79 1.75 1.764-.783 1.764-1.75 1.764zm13.5 12.268h-3v-5.604c0-3.368-4-3.113-4 0v5.604h-3v-11h3v1.765c1.396-2.586 7-2.777 7 2.476v6.759z"></path></svg></a>
+                  <a href="#"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M24 4.557c-.883.392-1.832.656-2.828.775 1.017-.609 1.798-1.574 2.165-2.724-.951.564-2.005.974-3.127 1.195-.897-.957-2.178-1.555-3.594-1.555-3.179 0-5.515 2.966-4.797 6.045-4.091-.205-7.719-2.165-10.148-5.144-1.29 2.213-.669 5.108 1.523 6.574-.806-.026-1.566-.247-2.229-.616-.054 2.281 1.581 4.415 3.949 4.89-.693.188-1.452.232-2.224.084.626 1.956 2.444 3.379 4.6 3.419-2.07 1.623-4.678 2.348-7.29 2.04 2.179 1.397 4.768 2.212 7.548 2.212 9.142 0 14.307-7.721 13.995-14.646.962-.695 1.797-1.562 2.457-2.549z"></path></svg></a>
+                </div>
+              </div>
             </footer>
           </>
         )}
