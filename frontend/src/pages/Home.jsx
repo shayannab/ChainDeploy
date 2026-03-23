@@ -73,8 +73,22 @@ function ScatteredTech() {
 }
 
 function DeploymentCard({ deployment, onDeleteRequest, onSelect }) {
-  const isBuilding = deployment.status !== 'RUNNING'
+  const [liveStatus, setLiveStatus] = useState(deployment.status)
+  const isBuilding = liveStatus === 'BUILDING'
   
+  // ── Poll for status ─────────────────────────────────────────
+  useEffect(() => {
+    if (liveStatus === 'BUILDING') {
+      const interval = setInterval(async () => {
+        try {
+          const res = await axios.get(`/api/deployments/${deployment.id}/status`)
+          setLiveStatus(res.data.status.toUpperCase())
+        } catch (err) { console.error('Card status fail:', err) }
+      }, 3000)
+      return () => clearInterval(interval)
+    }
+  }, [deployment.id, liveStatus])
+
   const copyUrl = (e) => {
     e.stopPropagation()
     navigator.clipboard.writeText(deployment.url)
@@ -93,11 +107,11 @@ function DeploymentCard({ deployment, onDeleteRequest, onSelect }) {
       </div>
 
       <p className="card-v3-desc">
-        Project status: <span className={deployment.status === 'RUNNING' ? 'highlight-cyan' : 'highlight-purple'}>{deployment.status}</span>. 
+        Project status: <span className={liveStatus === 'RUNNING' ? 'highlight-cyan' : 'highlight-purple'}>{liveStatus}</span>. 
         {isBuilding ? ' Current builds are being optimized for edge delivery.' : ' Securely hosted on ChainDeploy high-speed edge network.'}
       </p>
 
-      <div style={{ display: 'flex', gap: '12px' }}>
+      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
         <button className={`card-v3-btn ${isBuilding ? 'card-v3-btn-secondary' : ''}`} onClick={e => { 
           e.stopPropagation(); 
           if (isBuilding) onSelect(deployment);
@@ -105,25 +119,43 @@ function DeploymentCard({ deployment, onDeleteRequest, onSelect }) {
         }}>
           {isBuilding ? 'View Pipeline' : 'Launch Site'}
         </button>
+        <span className={`status-dot ${statusClass(liveStatus)}`} style={{ padding: '4px 10px', fontSize: '0.7rem' }}>{liveStatus}</span>
       </div>
     </div>
   )
 }
 
 function ProjectDetails({ project, onBack, onDelete }) {
-  const [logs, setLogs] = useState('Fetching logs...')
+  const [logs, setLogs] = useState([])
+  const [liveStatus, setLiveStatus] = useState(project.status)
   
+  // ── Live Logs (SSE) ──────────────────────────────────────
   useEffect(() => {
-    const fetchLogs = async () => {
+    const eventSource = new EventSource(`/api/deployments/${project.id}/stream-logs`)
+    
+    eventSource.onmessage = (event) => {
+      setLogs(prev => [...prev.slice(-100), event.data]) // Keep last 100 lines
+    }
+    
+    eventSource.onerror = (err) => {
+      console.error('SSE Error:', err)
+      eventSource.close()
+    }
+    
+    return () => eventSource.close()
+  }, [project.id])
+
+  // ── Live Status Polling ──────────────────────────────────
+  useEffect(() => {
+    const checkStatus = async () => {
       try {
-        const res = await axios.get(`/api/deployments/${project.id}/logs`)
-        setLogs(res.data.logs || 'No logs available.')
-      } catch {
-        setLogs('Could not fetch logs.')
+        const res = await axios.get(`/api/deployments/${project.id}/status`)
+        setLiveStatus(res.data.status.toUpperCase())
+      } catch (err) {
+        console.error('Status check fail:', err)
       }
     }
-    fetchLogs()
-    const interval = setInterval(fetchLogs, 5000)
+    const interval = setInterval(checkStatus, 3000) // Every 3s
     return () => clearInterval(interval)
   }, [project.id])
 
@@ -143,7 +175,7 @@ function ProjectDetails({ project, onBack, onDelete }) {
             </div>
           </div>
           <div style={{ display: 'flex', gap: '12px' }}>
-            <button className="btn-sm btn-delete" onClick={() => { onDelete(project.id); onBack(); }}>Delete Project</button>
+            <button className="btn-sm btn-delete" onClick={() => onDelete(project.id)}>Delete Project</button>
           </div>
         </div>
       </div>
@@ -153,7 +185,8 @@ function ProjectDetails({ project, onBack, onDelete }) {
           <div className="details-card">
             <h3>Live Logs</h3>
             <div className="terminal">
-              {(logs || '').split('\n').map((line, i) => {
+              {logs.length === 0 && <div className="log-line info">Connecting to log stream...</div>}
+              {logs.map((line, i) => {
                 let cls = 'log-line';
                 if (line.includes('[INFO]')) cls += ' info';
                 if (line.includes('[WARN]')) cls += ' warn';
@@ -332,15 +365,23 @@ export default function Home() {
   }
 
   const handleDelete = async (id) => {
-    if (!window.confirm('Are you sure you want to delete this deployment?')) return
-    try {
-      await api.delete(`/api/deployments/${id}`)
-      setDeployments(prev => prev.filter(d => d.id !== id))
-    } catch { alert('Failed to delete deployment') }
+    setDeleteTargetId(id)
+    setIsModalOpen(true)
   }
 
   if (selectedProject) {
-    return <ProjectDetails project={selectedProject} onBack={() => setSelectedProject(null)} onDelete={handleDelete} />
+    return (
+      <>
+        <ProjectDetails project={selectedProject} onBack={() => setSelectedProject(null)} onDelete={handleDelete} />
+        <ConfirmationModal 
+          isOpen={isModalOpen} 
+          onCancel={() => setIsModalOpen(false)} 
+          onConfirm={handleDeleteConfirm}
+          title="Delete Deployment?"
+          description="This will permanently stop the container and remove the deployment. This action cannot be undone."
+        />
+      </>
+    )
   }
 
   return (

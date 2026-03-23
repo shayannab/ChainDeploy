@@ -18,6 +18,7 @@ import subprocess
 import tempfile
 
 from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
@@ -373,7 +374,93 @@ def delete_deployment(
 
 
 # ─────────────────────────────────────────────────────────
-# ROUTE 5: Get logs from a running container
+# ROUTE 5: Get live status of a container
+# GET /api/deployments/{deployment_id}/status
+# ─────────────────────────────────────────────────────────
+@app.get("/api/deployments/{deployment_id}/status")
+def get_deployment_status(
+    deployment_id: int,
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    deployment = db.query(models.Deployment).filter(
+        models.Deployment.id == deployment_id,
+        models.Deployment.owner_id == current_user.id
+    ).first()
+    
+    if not deployment:
+        raise HTTPException(status_code=404, detail="Deployment not found")
+        
+    if not deployment.container_id:
+        return {"status": deployment.status}
+
+    try:
+        # Query docker for the real container status
+        result = subprocess.run(
+            ["docker", "inspect", "-f", "{{.State.Status}}", deployment.container_id],
+            capture_output=True,
+            text=True,
+            timeout=2
+        )
+        docker_status = result.stdout.strip() if result.returncode == 0 else "unknown"
+        
+        # Sync DB status with reality if it changed
+        if docker_status == "running" and deployment.status != models.DeploymentStatus.RUNNING.value:
+            deployment.status = models.DeploymentStatus.RUNNING.value
+            db.commit()
+        elif docker_status == "exited" and deployment.status != models.DeploymentStatus.FAILED.value:
+            # We don't automatically set to FAILED, maybe it just finished?
+            # But for dApps, we'll mark as CRASHED/STOPPED
+            pass
+            
+        return {"status": docker_status, "db_status": deployment.status}
+    except Exception:
+        return {"status": deployment.status}
+
+
+# ─────────────────────────────────────────────────────────
+# ROUTE 6: Stream real-time logs from a container
+# GET /api/deployments/{deployment_id}/stream-logs
+# ─────────────────────────────────────────────────────────
+@app.get("/api/deployments/{deployment_id}/stream-logs")
+def stream_logs(
+    deployment_id: int,
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(auth.get_current_user)
+):
+    deployment = db.query(models.Deployment).filter(
+        models.Deployment.id == deployment_id,
+        models.Deployment.owner_id == current_user.id
+    ).first()
+    
+    if not deployment:
+        raise HTTPException(status_code=404, detail="Deployment not found")
+        
+    if not deployment.container_id:
+        return StreamingResponse(iter(["data: Container not started yet...\n\n"]), media_type="text/event-stream")
+
+    def log_generator():
+        # --follow = keep the stream open
+        # --tail   = start with the last 20 lines
+        process = subprocess.Popen(
+            ["docker", "logs", "--follow", "--tail", "20", deployment.container_id],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True
+        )
+        
+        try:
+            for line in iter(process.stdout.readline, ""):
+                yield f"data: {line}\n\n"
+        finally:
+            process.terminate()
+            process.wait()
+
+    return StreamingResponse(log_generator(), media_type="text/event-stream")
+
+
+# ─────────────────────────────────────────────────────────
+# ROUTE 7: Classic logs (Fallback)
 # GET /api/deployments/{deployment_id}/logs
 #
 # Returns the last 100 lines of container logs.

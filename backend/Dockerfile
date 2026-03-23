@@ -1,21 +1,30 @@
 # ─────────────────────────────────────────────────────────
-# Dockerfile for the FastAPI backend
+# ChainDeploy Backend Dockerfile
 #
-# FROM python:3.11-slim  → start from a minimal Python image
-# WORKDIR /app           → all commands run from /app inside container
-# COPY requirements.txt  → copy just this file first (Docker caches layers,
-#                          so we only re-install deps when this file changes)
-# RUN pip install ...    → install all Python dependencies
-# COPY . .               → now copy the rest of the backend code
-# CMD ...                → start FastAPI with uvicorn on port 8000
+# This Dockerfile builds the API server. 
+# Crucially, we install the 'docker' CLI so the API can
+# command the host's Docker engine to run user projects.
 # ─────────────────────────────────────────────────────────
+
 FROM python:3.11-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    docker.io \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
+# Install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy the rest of the backend code
 COPY . .
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# Expose the API port
+EXPOSE 8000
+
+# Run the app with Uvicorn
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

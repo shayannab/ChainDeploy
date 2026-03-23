@@ -1,38 +1,40 @@
-version: "3.9"
+# ─────────────────────────────────────────────────────────
+# docker-compose.yml
+#
+# Orchestrates the ChainDeploy platform.
+# Starts the Backend API and a PostgreSQL database.
+# ─────────────────────────────────────────────────────────
+
+version: '3.8'
 
 services:
-  # ────────────────────────────────────────────────
-  # PostgreSQL — our database
-  # This runs a postgres container so you don't need
-  # to install Postgres on your machine manually.
-  # ────────────────────────────────────────────────
-  db:
-    image: postgres:15
-    restart: always
-    environment:
-      POSTGRES_USER: chaindeploy
-      POSTGRES_PASSWORD: chaindeploy_secret
-      POSTGRES_DB: chaindeploy_db
-    ports:
-      - "5432:5432"        # expose postgres on localhost:5432
-    volumes:
-      - postgres_data:/var/lib/postgresql/data  # persist data between restarts
-
-  # ────────────────────────────────────────────────
-  # FastAPI Backend
-  # ────────────────────────────────────────────────
+  # The ChainDeploy API
   backend:
     build: ./backend
     restart: always
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql://chaindeploy:chaindeploy_secret@db:5432/chaindeploy_db
+      - DATABASE_URL=postgresql://chainuser:chainpass@db:5432/chaindeploy
+      - SECRET_KEY=replace_this_with_a_long_random_string
     volumes:
-      - ./backend:/app          # hot reload: changes reflect instantly
-      - /var/run/docker.sock:/var/run/docker.sock  # lets the backend control Docker!
+      # CRITICAL: This allows the backend to command the host's Docker engine
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Persistent storage for uploaded ZIPs/Deployments
+      - ./data:/app/data
     depends_on:
       - db
+
+  # The Managed Database (PostgreSQL)
+  db:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      - POSTGRES_USER=chainuser
+      - POSTGRES_PASSWORD=chainpass
+      - POSTGRES_DB=chaindeploy
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
 
 volumes:
   postgres_data:
