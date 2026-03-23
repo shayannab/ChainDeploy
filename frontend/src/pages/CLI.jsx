@@ -3,7 +3,7 @@ import GenericPage from './GenericPage'
 export default function CLI() {
   return (
     <GenericPage title="CLI Reference">
-      <p>Deploy directly from your terminal with the ChainDeploy CLI.</p>
+      <p>Deploy directly from your terminal with the ChainDeploy CLI. <span className="status-badge" style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '100px', border: '1px solid var(--primary)', color: 'var(--primary)', marginLeft: '8px' }}>COMING SOON / BETA</span></p>
       <pre style={{ background: '#111', padding: '16px', borderRadius: '8px', overflowX: 'auto', border: '1px solid var(--border)' }}>
         <code>npm install -g chaindeploy-cli</code>
       </pre>

@@ -356,7 +356,7 @@ export default function Home() {
             not <span className="highlight-orange">weeks</span>.
           </h1>
           <p>
-            Stop wrestling with infrastructure. chainDeploy turns your code into a production-grade, globally-distributed dApp in one click.
+            Stop wrestling with infrastructure. chainDeploy turns your code into a production-grade, deployment-ready dApp in one click.
           </p>
           <div style={{ display: 'flex', gap: '16px', justifyContent: 'center' }}>
             <button className="btn-deploy" onClick={() => document.getElementById('dashboard').scrollIntoView({ behavior: 'smooth' })}>
@@ -385,7 +385,37 @@ export default function Home() {
           <div className="details-card">
             <div style={{ color: 'var(--primary)', marginBottom: '16px' }}><Zap size={32} /></div>
             <h3>3. Instant Live</h3>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Your dApp is live on 20+ edge regions. mTLS, SSL, DDoS protection included.</p>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Your dApp is live instantly on our high-speed cloud. mTLS, SSL, DDoS protection are on the roadmap.</p>
+          </div>
+        </div>
+      </section>
+      
+      <section id="roadmap" style={{ padding: '80px 0', borderTop: '1px solid var(--border)', background: 'rgba(0,0,0,0.2)' }}>
+        <div className="section-header" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', marginBottom: '60px' }}>
+          <div className="hero-eyebrow" style={{ marginBottom: '16px' }}>The Future</div>
+          <h2 style={{ margin: 0 }}>Our Roadmap</h2>
+        </div>
+        <div style={{ maxWidth: '800px', margin: '0 auto', display: 'grid', gap: '24px' }}>
+          <div className="roadmap-item" style={{ padding: '24px', borderRadius: '16px', border: '1px solid var(--border)', background: 'var(--bg-secondary)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <h4 style={{ margin: 0, color: 'var(--primary)' }}>Global Edge Network</h4>
+              <span className="status-badge" style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '100px', border: '1px solid var(--primary)', color: 'var(--primary)' }}>UPCOMING</span>
+            </div>
+            <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.9rem' }}>Deploying to 20+ regions worldwide for sub-100ms latency globally.</p>
+          </div>
+          <div className="roadmap-item" style={{ padding: '24px', borderRadius: '16px', border: '1px solid var(--border)', background: 'var(--bg-secondary)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <h4 style={{ margin: 0, color: 'var(--primary)' }}>Advanced Security Guard</h4>
+              <span className="status-badge" style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '100px', border: '1px solid var(--primary)', color: 'var(--primary)' }}>PLANNING</span>
+            </div>
+            <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.9rem' }}>Automated mTLS, DDoS mitigation, and enterprise-grade SSL management.</p>
+          </div>
+          <div className="roadmap-item" style={{ padding: '24px', borderRadius: '16px', border: '1px solid var(--border)', background: 'var(--bg-secondary)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <h4 style={{ margin: 0, color: 'var(--primary)' }}>Unified CLI Tool</h4>
+              <span className="status-badge" style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '100px', border: '1px solid var(--primary)', color: 'var(--primary)' }}>IN DEV</span>
+            </div>
+            <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.9rem' }}>Deploy directly from your terminal with a single command.</p>
           </div>
         </div>
       </section>

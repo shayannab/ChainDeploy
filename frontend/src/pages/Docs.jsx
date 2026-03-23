@@ -7,9 +7,9 @@ export default function Docs() {
       <h2>Getting Started</h2>
       <p>ChainDeploy allows you to deploy Node.js, Python, Rust, Go, Hardhat, and Foundry applications in seconds.</p>
       <ul>
-        <li>Drag and drop your .zip project.</li>
-        <li>We handle the Docker build securely.</li>
-        <li>Your app goes live on 20+ edge regions globally.</li>
+        <li>Drag and drop your project ZIP.</li>
+        <li>Automated builds for Node, Python, Rust, and Go.</li>
+        <li>Multi-region edge network (coming soon - see roadmap).</li>
       </ul>
     </GenericPage>
   )

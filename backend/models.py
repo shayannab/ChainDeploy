@@ -31,6 +31,8 @@ class DeploymentType(str, enum.Enum):
     WEB3_REACT = "Web3 React"     # React app using ethers/wagmi/viem
     NODE       = "Node.js"        # Generic Node app
     PYTHON     = "Python"         # Python app
+    RUST       = "Rust"           # Rust/Cargo app
+    GO         = "Go"             # Go/Golang app
     STATIC     = "Static HTML"    # Plain HTML/CSS/JS
 
 

@@ -74,7 +74,15 @@ def detect_project_type(app_dir: str) -> DeploymentType:
     if os.path.exists(os.path.join(app_dir, "requirements.txt")):
         return DeploymentType.PYTHON
 
-    # ── Check 7: Static HTML ────────────────────────────
+    # ── Check 7: Rust ───────────────────────────────────
+    if os.path.exists(os.path.join(app_dir, "Cargo.toml")):
+        return DeploymentType.RUST
+
+    # ── Check 8: Go ─────────────────────────────────────
+    if os.path.exists(os.path.join(app_dir, "go.mod")):
+        return DeploymentType.GO
+
+    # ── Check 9: Static HTML ────────────────────────────
     if os.path.exists(os.path.join(app_dir, "index.html")):
         return DeploymentType.STATIC
 

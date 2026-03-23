@@ -214,6 +214,41 @@ CMD ["sh", "-c", "python app.py 2>/dev/null || python main.py 2>/dev/null || uvi
             5000,
         )
 
+    # ── Rust ──────────────────────────────────────────────
+    elif deploy_type == DeploymentType.RUST:
+        return (
+            """FROM rust:1.70-slim as builder
+WORKDIR /app
+COPY . .
+RUN cargo build --release
+
+FROM debian:bookworm-slim
+WORKDIR /app
+COPY --from=builder /app/target/release/* ./
+EXPOSE 8080
+# Note: This assumes the binary name is the first one found or specifically named
+CMD ["sh", "-c", "./$(ls -F | grep '*' | head -n 1 | tr -d '*')"]
+""",
+            8080,
+        )
+
+    # ── Go ────────────────────────────────────────────────
+    elif deploy_type == DeploymentType.GO:
+        return (
+            """FROM golang:1.20-alpine as builder
+WORKDIR /app
+COPY . .
+RUN go build -o main .
+
+FROM alpine:latest
+WORKDIR /app
+COPY --from=builder /app/main .
+EXPOSE 8080
+CMD ["./main"]
+""",
+            8080,
+        )
+
     # ── Static HTML ───────────────────────────────────────
     else:
         return (
