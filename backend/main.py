@@ -23,6 +23,7 @@ from sqlalchemy.orm import Session
 
 import database
 import models
+import auth
 from detector import detect_project_type
 from dockerfile_generator import generate_dockerfile
 
@@ -87,6 +88,58 @@ def find_free_port(start: int = 3100) -> int:
 def health_check():
     return {"status": "ok", "service": "ChainDeploy API"}
 
+# ─────────────────────────────────────────────────────────
+# AUTH ROUTE 1: Get Nonce
+# POST /api/auth/nonce
+# ─────────────────────────────────────────────────────────
+@app.post("/api/auth/nonce")
+def get_nonce(address: str, db: Session = Depends(database.get_db)):
+    # Check if user exists, if not create them
+    user = db.query(models.User).filter(
+        models.User.address == address.lower()
+    ).first()
+    
+    if not user:
+        user = models.User(address=address.lower())
+        db.add(user)
+        db.commit()
+    
+    # Generate new nonce
+    nonce = auth.generate_nonce()
+    user.nonce = nonce
+    db.commit()
+    
+    return {"nonce": nonce}
+
+# ─────────────────────────────────────────────────────────
+# AUTH ROUTE 2: Verify Signature & Login
+# POST /api/auth/verify
+# ─────────────────────────────────────────────────────────
+@app.post("/api/auth/verify")
+def verify(
+    address: str = Form(...), 
+    signature: str = Form(...),
+    db: Session = Depends(database.get_db)
+):
+    user = db.query(models.User).filter(
+        models.User.address == address.lower()
+    ).first()
+    
+    if not user or not user.nonce:
+        raise HTTPException(status_code=400, detail="Nonce not generated for this address")
+    
+    # Verify the signature
+    if not auth.verify_ethereum_signature(address, signature, user.nonce):
+        raise HTTPException(status_code=401, detail="Invalid signature")
+    
+    # Clear nonce after use
+    user.nonce = None
+    db.commit()
+    
+    # Create JWT token
+    access_token = auth.create_access_token(data={"sub": user.address})
+    return {"access_token": access_token, "token_type": "bearer"}
+
 
 # ─────────────────────────────────────────────────────────
 # ROUTE 2: Deploy an app
@@ -106,7 +159,8 @@ def health_check():
 async def deploy_app(
     file: UploadFile = File(...),           # the uploaded ZIP file
     project_name: str = Form("my-dapp"),   # optional name from the form
-    db: Session = Depends(database.get_db) # inject a DB session
+    db: Session = Depends(database.get_db), # inject a DB session
+    current_user: models.User = Depends(auth.get_current_user) # Require auth
 ):
     # ── Step 1: Create a unique ID for this deployment ──
     app_id = str(uuid.uuid4())[:8]   # e.g. "a3f2b1c9"
@@ -155,6 +209,7 @@ async def deploy_app(
         deploy_type=deploy_type.value,
         status=models.DeploymentStatus.BUILDING.value,
         image_name=image_name,
+        owner_id=current_user.id # Link to owner
     )
     db.add(deployment)
     db.commit()
@@ -271,9 +326,13 @@ async def deploy_app(
 # The frontend dashboard calls this to show the list of apps.
 # ─────────────────────────────────────────────────────────
 @app.get("/api/deployments")
-def list_deployments(db: Session = Depends(database.get_db)):
+def list_deployments(
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(auth.get_current_user)
+):
     deployments = (
         db.query(models.Deployment)
+        .filter(models.Deployment.owner_id == current_user.id) # Filter by owner
         .order_by(models.Deployment.created_at.desc())  # newest first
         .all()
     )
@@ -287,9 +346,14 @@ def list_deployments(db: Session = Depends(database.get_db)):
 # Stops the Docker container and removes it from the DB.
 # ─────────────────────────────────────────────────────────
 @app.delete("/api/deployments/{deployment_id}")
-def delete_deployment(deployment_id: int, db: Session = Depends(database.get_db)):
+def delete_deployment(
+    deployment_id: int, 
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(auth.get_current_user)
+):
     deployment = db.query(models.Deployment).filter(
-        models.Deployment.id == deployment_id
+        models.Deployment.id == deployment_id,
+        models.Deployment.owner_id == current_user.id # Ensure ownership
     ).first()
 
     if not deployment:
@@ -316,9 +380,14 @@ def delete_deployment(deployment_id: int, db: Session = Depends(database.get_db)
 # Useful for debugging failed or misbehaving deployments.
 # ─────────────────────────────────────────────────────────
 @app.get("/api/deployments/{deployment_id}/logs")
-def get_logs(deployment_id: int, db: Session = Depends(database.get_db)):
+def get_logs(
+    deployment_id: int, 
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(auth.get_current_user)
+):
     deployment = db.query(models.Deployment).filter(
-        models.Deployment.id == deployment_id
+        models.Deployment.id == deployment_id,
+        models.Deployment.owner_id == current_user.id # Ensure ownership
     ).first()
 
     if not deployment:

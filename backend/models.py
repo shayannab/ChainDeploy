@@ -11,7 +11,8 @@
 
 import enum
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, DateTime, Enum
+from sqlalchemy import Column, Integer, String, DateTime, Enum, ForeignKey
+from sqlalchemy.orm import relationship
 from database import Base
 
 
@@ -31,6 +32,18 @@ class DeploymentType(str, enum.Enum):
     NODE       = "Node.js"        # Generic Node app
     PYTHON     = "Python"         # Python app
     STATIC     = "Static HTML"    # Plain HTML/CSS/JS
+
+
+class User(Base):
+    __tablename__ = "users"
+
+    id              = Column(Integer, primary_key=True, index=True)
+    address         = Column(String, unique=True, index=True, nullable=False)
+    nonce           = Column(String, nullable=True) # For SIWE
+    created_at      = Column(DateTime, default=datetime.utcnow)
+
+    # Relationship to deployments
+    deployments     = relationship("Deployment", back_populates="owner")
 
 
 class Deployment(Base):
@@ -68,3 +81,7 @@ class Deployment(Base):
 
     # Auto-set when the row is created
     created_at   = Column(DateTime, default=datetime.utcnow)
+
+    # Link to the user who owns this deployment
+    owner_id     = Column(Integer, ForeignKey("users.id"))
+    owner        = relationship("User", back_populates="deployments")

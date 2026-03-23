@@ -9,11 +9,16 @@ import CLI from './pages/CLI'
 import Privacy from './pages/Privacy'
 import Terms from './pages/Terms'
 
+// Web3
+import Web3Provider from './context/Web3Provider'
+import { ConnectButton } from '@rainbow-me/rainbowkit'
+
 export default function App() {
   const [darkMode, setDarkMode] = useState(true)
   const location = useLocation()
 
   return (
+    <Web3Provider>
     <div className={`app-wrapper ${darkMode ? '' : 'light-mode'}`}>
       <div className="app">
         <nav className="navbar">
@@ -34,7 +39,7 @@ export default function App() {
             <button className="btn-theme-toggle" onClick={() => setDarkMode(!darkMode)}>
               {darkMode ? <Sun size={20} /> : <Moon size={20} />}
             </button>
-            <span className="nav-badge">BETA · V1</span>
+            <ConnectButton />
           </div>
         </nav>
 
@@ -99,5 +104,6 @@ export default function App() {
         </footer>
       </div>
     </div>
+    </Web3Provider>
   )
 }

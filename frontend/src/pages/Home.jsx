@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import axios from 'axios'
-import { Hammer, Wrench, Package, Atom, Code, FileCode, Globe, Sparkles, FolderArchive, ScanSearch, Zap, MapPin, Rocket } from 'lucide-react'
+import { Hammer, Wrench, Package, Atom, Code, FileCode, Globe, Sparkles, FolderArchive, ScanSearch, Zap, MapPin, Rocket, ShieldCheck, Lock } from 'lucide-react'
+import { useAccount, useSignMessage } from 'wagmi'
+import { ConnectButton } from '@rainbow-me/rainbowkit'
 
 // ── Icons (Simplified) ──────────────────────────────────────
 const IconCopy = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
@@ -202,6 +204,9 @@ function ProjectDetails({ project, onBack, onDelete }) {
 }
 
 export default function Home() {
+  const { address, isConnected } = useAccount()
+  const { signMessageAsync }    = useSignMessage()
+
   const [file, setFile]               = useState(null)
   const [projectName, setProjectName] = useState('')
   const [deployments, setDeployments] = useState([])
@@ -211,12 +216,65 @@ export default function Home() {
   const [selectedProject, setSelectedProject] = useState(null)
   const [deleteTargetId, setDeleteTargetId] = useState(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
+  const [token, setToken]             = useState(localStorage.getItem('cd_token'))
+  const [isAuthenticating, setIsAuthenticating] = useState(false)
 
-  useEffect(() => { fetchDeployments() }, [])
+  // ── Auth Logic ──────────────────────────────────────────
+  const handleAuth = async () => {
+    if (!isConnected || !address || token) return
+    
+    setIsAuthenticating(true)
+    try {
+      // 1. Get nonce
+      const { data: { nonce } } = await axios.post(`/api/auth/nonce?address=${address}`)
+      
+      // 2. Sign message
+      const message = `Sign this message to authenticate with ChainDeploy: ${nonce}`
+      const signature = await signMessageAsync({ message })
+      
+      // 3. Verify on backend
+      const formData = new FormData()
+      formData.append('address', address)
+      formData.append('signature', signature)
+      
+      const { data: { access_token } } = await axios.post('/api/auth/verify', formData)
+      
+      // 4. Save token
+      localStorage.setItem('cd_token', access_token)
+      setToken(access_token)
+    } catch (err) {
+      console.error('Auth failed:', err)
+      setStatus({ type: 'error', msg: 'Authentication failed. Please try again.' })
+    } finally {
+      setIsAuthenticating(false)
+    }
+  }
+
+  useEffect(() => {
+    if (isConnected && !token) handleAuth()
+  }, [isConnected, address, token])
+
+  // Clear token if wallet disconnects
+  useEffect(() => {
+    if (!isConnected && token) {
+      localStorage.removeItem('cd_token')
+      setToken(null)
+      setDeployments([])
+    }
+  }, [isConnected])
+
+  // Setup axios with token
+  const api = axios.create({
+    headers: token ? { Authorization: `Bearer ${token}` } : {}
+  })
+
+  useEffect(() => { 
+    if (token) fetchDeployments() 
+  }, [token])
 
   const fetchDeployments = async () => {
     try {
-      const res = await axios.get('/api/deployments')
+      const res = await api.get('/api/deployments')
       setDeployments(res.data)
     } catch (err) { console.error('Fetch error:', err) }
   }
@@ -229,7 +287,7 @@ export default function Home() {
   const handleDeleteConfirm = async () => {
     if (!deleteTargetId) return
     try {
-      await axios.delete(`/api/deployments/${deleteTargetId}`)
+      await api.delete(`/api/deployments/${deleteTargetId}`)
       setDeployments(prev => prev.filter(d => d.id !== deleteTargetId))
       if (selectedProject?.id === deleteTargetId) setSelectedProject(null)
     } catch (err) {
@@ -262,7 +320,7 @@ export default function Home() {
     formData.append('project_name', projectName || file.name.replace('.zip', ''))
 
     try {
-      const res = await axios.post('/api/deploy', formData, {
+      const res = await api.post('/api/deploy', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       })
       setStatus({ type: 'success', msg: `🚀 Deployed to ${res.data.url}` })
@@ -276,7 +334,7 @@ export default function Home() {
   const handleDelete = async (id) => {
     if (!window.confirm('Are you sure you want to delete this deployment?')) return
     try {
-      await axios.delete(`/api/deployments/${id}`)
+      await api.delete(`/api/deployments/${id}`)
       setDeployments(prev => prev.filter(d => d.id !== id))
     } catch { alert('Failed to delete deployment') }
   }
@@ -301,57 +359,12 @@ export default function Home() {
             Stop wrestling with infrastructure. chainDeploy turns your code into a production-grade, globally-distributed dApp in one click.
           </p>
           <div style={{ display: 'flex', gap: '16px', justifyContent: 'center' }}>
-            <button className="btn-deploy" onClick={() => document.getElementById('deploy-app').scrollIntoView({ behavior: 'smooth' })}>
-              Get Started
+            <button className="btn-deploy" onClick={() => document.getElementById('dashboard').scrollIntoView({ behavior: 'smooth' })}>
+              View Dashboard
             </button>
           </div>
         </div>
       </section>
-
-      <div 
-        className={`upload-card ${dragOver ? 'drag-over' : ''}`} 
-        id="deploy-app"
-      >
-        <div 
-          className="upload-dropzone" 
-          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-          onDragLeave={(e) => { e.preventDefault(); setDragOver(false); }}
-          onDrop={handleDrop}
-          onClick={() => document.getElementById('file-input').click()}
-        >
-          <input type="file" accept=".zip" onChange={handleFileChange} id="file-input" style={{ display: 'none' }} />
-          
-          <div style={{ textAlign: 'left', width: '100%', marginBottom: '24px' }}>
-            <h3 style={{ fontSize: '1.2rem', marginBottom: '8px', color: 'var(--text-primary)' }}>Project Upload</h3>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Supported formats: .ZIP</p>
-          </div>
-
-          <div className="upload-box-inner">
-            <div style={{ marginBottom: '16px', background: 'var(--bg-card)', padding: '16px', borderRadius: '50%', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--text-secondary)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>
-            </div>
-            
-            <div style={{ fontWeight: 600, fontSize: '1rem', marginBottom: '8px', color: 'var(--text-primary)' }}>
-              Click to select
-            </div>
-            <div style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>
-              {file ? `Selected: ${file.name}` : 'or drag and drop file here'}
-            </div>
-          </div>
-        </div>
-
-        <div className="form-row">
-          <div className="form-group">
-            <label>PROJECT NAME</label>
-            <input type="text" placeholder="my-awesome-dapp" value={projectName} onChange={e => setProjectName(e.target.value)} />
-          </div>
-          <button className="btn-deploy" onClick={handleDeploy} disabled={loading || !file}>
-            {loading ? 'Deploying...' : '🚀 START DEPLOYMENT'}
-          </button>
-        </div>
-      </div>
-
-      {status && <div className={`status-banner ${status.type}`}>{status.msg}</div>}
 
       <section id="how-it-works" style={{ padding: '80px 0', borderTop: '1px solid var(--border)' }}>
         <div className="section-header" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', marginBottom: '60px' }}>
@@ -372,110 +385,85 @@ export default function Home() {
           <div className="details-card">
             <div style={{ color: 'var(--primary)', marginBottom: '16px' }}><Zap size={32} /></div>
             <h3>3. Instant Live</h3>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Your dApp is live on 20+ edge regions. mTLS, SSL, DDoS protection included. Your users see sub-100ms latency.</p>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Your dApp is live on 20+ edge regions. mTLS, SSL, DDoS protection included.</p>
           </div>
         </div>
       </section>
 
-      <section id="features" style={{ padding: '80px 0', borderTop: '1px solid var(--border)', background: 'var(--bg-primary)' }}>
+      <section id="dashboard" style={{ padding: '80px 0', borderTop: '1px solid var(--border)', minHeight: '600px' }}>
         <div className="section-header" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', marginBottom: '60px' }}>
-          <div className="hero-eyebrow" style={{ marginBottom: '16px' }}>Technical Excellence</div>
-          <h2 style={{ margin: 0 }}>A Platform for Power Users.</h2>
+          <div className="hero-eyebrow" style={{ marginBottom: '16px' }}>Management</div>
+          <h2 style={{ margin: 0 }}>Project Dashboard</h2>
         </div>
-        
-        <div className="features-grid-tailark">
-          <div className="feature-box">
-            <div>
-              <div className="hero-eyebrow" style={{ fontSize: '10px', padding: '4px 10px', marginBottom: '12px' }}>Network</div>
-              <h3>Global Deployment</h3>
-              <p>Your dApp's live in Tokyo, Singapore, São Paulo before your coffee gets cold. Sub-100ms latency everywhere.</p>
-            </div>
-            <div className="dotted-map">
-              <div className="map-marker">
-                <MapPin size={16} />
-                <span style={{ fontWeight: 600 }}>Tokyo, JP</span>
-                <span style={{ color: 'var(--accent-green)' }}>●</span>
-              </div>
+
+        {!isConnected ? (
+          <div className="empty-state" style={{ textAlign: 'center', padding: '60px 24px' }}>
+            <Lock size={64} style={{ color: 'var(--primary)', marginBottom: '24px' }} />
+            <h1>Protected Dashboard</h1>
+            <p style={{ color: 'var(--text-muted)', marginBottom: '32px' }}>Please connect your wallet to access your deployments.</p>
+            <div style={{ display: 'flex', justifyContent: 'center' }}>
+               <ConnectButton />
             </div>
           </div>
-
-          <div className="feature-box">
-            <div>
-              <div className="hero-eyebrow" style={{ fontSize: '10px', padding: '4px 10px', marginBottom: '12px' }}>Support</div>
-              <h3>Real-time Debugging</h3>
-              <p>Build fails at 2am? We show you exactly what broke. AI suggests the fix. One click to retry. Ship without waiting.</p>
-            </div>
-            <div className="chat-mock">
-              <div className="chat-bubble ai">Build failed: missing `process.env`.</div>
-              <div className="chat-bubble user">Fix it automatically.</div>
-              <div className="chat-bubble ai">Env vars injected. Retrying build...</div>
-            </div>
-          </div>
-
-          <div className="feature-box full-width">
-            <div style={{ textAlign: 'center' }}>
-              <div className="hero-eyebrow" style={{ fontSize: '10px', padding: '4px 10px', marginBottom: '12px' }}>Reliability</div>
-              <h3>Zero Downtime</h3>
-              <p style={{ margin: '0 auto' }}>99.99% uptime isn't luck—it's architecture. Redundant failovers, automatic scaling, zero-downtime deploys. Sleep well.</p>
-            </div>
-            <div className="uptime-stat highlight-cyan">99.99%</div>
-            <div style={{ textAlign: 'center', fontSize: '0.8rem', color: 'var(--text-muted)', letterSpacing: '4px' }}>UPTIME STATUS : OPERATIONAL</div>
-          </div>
-
-          <div className="feature-box">
-            <div>
-              <div className="hero-eyebrow" style={{ fontSize: '10px', padding: '4px 10px', marginBottom: '12px' }}>Insight</div>
-              <h3>Live Metrics</h3>
-              <p>Know what your dApp is doing. Right now. Deployments, container health, traffic spikes—all on one dashboard.</p>
-            </div>
-            <div className="activity-chart">
-              {[40, 70, 45, 90, 65, 80, 55, 95, 60, 85].map((h, i) => (
-                <div key={i} className="chart-bar" style={{ height: `${h}%` }}></div>
-              ))}
-            </div>
-          </div>
-
-          <div className="feature-box">
-            <div>
-              <div className="hero-eyebrow" style={{ fontSize: '10px', padding: '4px 10px', marginBottom: '12px' }}>Security</div>
-              <h3>Security by Default</h3>
-              <p>mTLS. AES-256 encryption. Firewall rules. Every deployment is sandboxed by default. Your code's locked down.</p>
-            </div>
-            <div style={{ marginTop: 'auto', display: 'flex', gap: '8px' }}>
-              <span className="type-badge static">mTLS</span>
-              <span className="type-badge static">Firewall</span>
-              <span className="type-badge static">AES-256</span>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section id="dashboard">
-        <div className="section-header" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', margin: '80px 0 40px' }}>
-          <div className="hero-eyebrow" style={{ marginBottom: '16px' }}>Dashboard</div>
-          <h2 style={{ margin: 0 }}>Active Deployments <span style={{ opacity: 0.3, fontSize: '0.6em' }}>({deployments.length})</span></h2>
-        </div>
-        {deployments.length === 0 ? (
-          <div className="empty-state" style={{ textAlign: 'center', padding: '60px 24px', background: 'var(--bg-card)', borderRadius: '24px', border: '1px dashed var(--border)' }}>
-            <div className="icon" style={{ marginBottom: '16px', color: 'var(--text-muted)' }}><Rocket size={48} /></div>
-            <h3 style={{ fontSize: '1.25rem', marginBottom: '8px' }}>No deployments yet.</h3>
-            <p style={{ color: 'var(--text-muted)', marginBottom: '24px', maxWidth: '400px', margin: '0 auto 24px' }}>
-              Create one and watch the magic happen. Deploy any Node, Python, Rust, or Go project in under 60 seconds.
-            </p>
-            <button className="btn-deploy" onClick={() => document.getElementById('deploy-app').scrollIntoView({ behavior: 'smooth' })}>
-              Deploy your first dApp
+        ) : !token ? (
+          <div className="empty-state" style={{ textAlign: 'center', padding: '60px 24px' }}>
+            <ShieldCheck size={64} style={{ color: 'var(--primary)', marginBottom: '24px' }} />
+            <h1>Signature Required</h1>
+            <p style={{ color: 'var(--text-muted)', marginBottom: '32px' }}>Please sign the message in your wallet to confirm ownership.</p>
+            <button className="btn-deploy" onClick={handleAuth} disabled={isAuthenticating}>
+              {isAuthenticating ? 'Authenticating...' : 'Sign Message to Enter'}
             </button>
           </div>
         ) : (
-          <div className="deployments-grid">
-            {deployments.map(d => (
-              <DeploymentCard 
-                key={d.id} 
-                deployment={d} 
-                onDeleteRequest={handleDeleteRequest} 
-                onSelect={setSelectedProject} 
-              />
-            ))}
+          <div style={{ maxWidth: '1200px', margin: '0 auto', width: '100%' }}>
+            <div className={`upload-card ${dragOver ? 'drag-over' : ''}`} id="deploy-app" style={{ marginBottom: '60px' }}>
+              <div 
+                className="upload-dropzone" 
+                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                onDragLeave={(e) => { e.preventDefault(); setDragOver(false); }}
+                onDrop={handleDrop}
+                onClick={() => document.getElementById('file-input').click()}
+              >
+                <input type="file" accept=".zip" onChange={handleFileChange} id="file-input" style={{ display: 'none' }} />
+                <div style={{ textAlign: 'left', width: '100%', marginBottom: '24px' }}>
+                  <h3 style={{ fontSize: '1.2rem', marginBottom: '8px', color: 'var(--text-primary)' }}>New Deployment</h3>
+                  <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Drop your .zip project here</p>
+                </div>
+                <div className="upload-box-inner">
+                   <div style={{ color: 'var(--text-muted)', fontSize: '1.1rem' }}>
+                    {file ? `Selected: ${file.name}` : 'Click or drag and drop file here'}
+                  </div>
+                </div>
+              </div>
+
+              <div className="form-row">
+                <div className="form-group">
+                  <label>PROJECT NAME</label>
+                  <input type="text" placeholder="my-awesome-dapp" value={projectName} onChange={e => setProjectName(e.target.value)} />
+                </div>
+                <button className="btn-deploy" onClick={handleDeploy} disabled={loading || !file}>
+                  {loading ? 'Deploying...' : '🚀 START DEPLOYMENT'}
+                </button>
+              </div>
+              {status && <div className={`status-banner ${status.type}`} style={{ marginTop: '20px' }}>{status.msg}</div>}
+            </div>
+
+            <div className="deployments-grid">
+              {deployments.length === 0 ? (
+                 <div style={{ textAlign: 'center', gridColumn: '1/-1', padding: '40px', color: 'var(--text-muted)', border: '1px dashed var(--border)', borderRadius: '16px' }}>
+                   No deployments found for this address. Change your world today.
+                 </div>
+              ) : (
+                deployments.map(d => (
+                  <DeploymentCard 
+                    key={d.id} 
+                    deployment={d} 
+                    onDeleteRequest={handleDeleteRequest} 
+                    onSelect={setSelectedProject} 
+                  />
+                ))
+              )}
+            </div>
           </div>
         )}
       </section>
@@ -485,7 +473,7 @@ export default function Home() {
         onCancel={() => setIsModalOpen(false)}
         onConfirm={handleDeleteConfirm}
         title="Are you absolutely sure?"
-        description="This action cannot be undone. This will permanently delete your project and remove all associated data from our edge servers."
+        description="This action cannot be undone. This will permanently delete your project data."
       />
     </>
   )
