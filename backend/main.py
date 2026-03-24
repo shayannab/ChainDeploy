@@ -58,7 +58,9 @@ models.Base.metadata.create_all(bind=database.engine)
 #   Windows → C:\Users\<user>\AppData\Local\Temp
 #   Linux   → /tmp
 #   Mac     → /var/folders/...
-BASE_DEPLOYMENTS_DIR = os.path.join(tempfile.gettempdir(), "chaindeploy")
+# FIX: Use a shorter folder name ('cd' instead of 'chaindeploy') to help with Windows 260 character path limits.
+# Even better: The user should EXCLUDE node_modules from their ZIP file!
+BASE_DEPLOYMENTS_DIR = os.path.join(tempfile.gettempdir(), "cd")
 os.makedirs(BASE_DEPLOYMENTS_DIR, exist_ok=True)
 
 
@@ -196,9 +198,15 @@ async def deploy_app(
                 shutil.move(os.path.join(nested_dir, item), app_dir)
             os.rmdir(nested_dir)
 
-    except zipfile.BadZipFile:
-        shutil.rmtree(app_dir)  # clean up on error
-        raise HTTPException(status_code=400, detail="Invalid or corrupted ZIP file")
+    except Exception as e:
+        shutil.rmtree(app_dir, ignore_errors=True)
+        # Check if it looks like a Windows path length error
+        if "node_modules" in str(e) and os.name == "nt":
+            raise HTTPException(
+                status_code=400, 
+                detail="ZIP extraction failed. Your project contains a 'node_modules' folder that is too deep for Windows. Please DELETE 'node_modules' before zipping! (The cloud builder will install them automatically)."
+            )
+        raise HTTPException(status_code=500, detail=f"Extraction error: {str(e)}")
 
     # ── Step 5: Detect the project type ─────────────────
     deploy_type = detect_project_type(app_dir)

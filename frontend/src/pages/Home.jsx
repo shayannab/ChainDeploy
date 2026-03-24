@@ -251,6 +251,13 @@ export default function Home() {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [token, setToken]             = useState(localStorage.getItem('cd_token'))
   const [isAuthenticating, setIsAuthenticating] = useState(false)
+  const [authError, setAuthError]             = useState(false)
+
+  const clearAuth = () => {
+    localStorage.removeItem('cd_token')
+    setToken(null)
+    setDeployments([])
+  }
 
   // ── Auth Logic ──────────────────────────────────────────
   const handleAuth = async () => {
@@ -309,7 +316,11 @@ export default function Home() {
     try {
       const res = await api.get('/api/deployments')
       setDeployments(res.data)
-    } catch (err) { console.error('Fetch error:', err) }
+      setAuthError(false)
+    } catch (err) { 
+      console.error('Fetch error:', err)
+      if (err.response?.status === 401) clearAuth()
+    }
   }
 
   const handleDeleteRequest = (id) => {
@@ -347,6 +358,7 @@ export default function Home() {
     if (!file) return
     setLoading(true)
     setStatus({ type: 'building', msg: `Deploying "${projectName || file.name}"...` })
+    setAuthError(false)
 
     const formData = new FormData()
     formData.append('file', file)
@@ -360,6 +372,7 @@ export default function Home() {
       setFile(null); setProjectName('')
       fetchDeployments()
     } catch (err) {
+      if (err.response?.status === 401) clearAuth()
       setStatus({ type: 'error', msg: err.response?.data?.detail || 'Deployment failed.' })
     } finally { setLoading(false) }
   }
