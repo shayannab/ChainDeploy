@@ -12,6 +12,12 @@ ChainDeploy is an automated deployment engine built for the modern dApp lifecycl
 - **Web3 First**: Native support for smart contract devnodes (Anvil, Hardhat Node).
 - **Live Logs**: Real-time terminal streaming for instant debugging.
 
+## 📺 Live Demo & Deployment Status
+
+- **Frontend (Live)**: [chain-deploy.vercel.app](https://chain-deploy.vercel.app/)
+- **Infrastructure**: The core engine is architected for VPS deployment with root Docker access. For this hackathon, we have opted to show the **full infrastructure in action via the Demo Video** while maintaining a live, interactive UI on Vercel for the judges.
+- **Demo Video**: [Your Video Link Here]
+
 ## 🛠️ User Workflow
 
 1.  **Connect**: Connect your Ethereum wallet (MetaMask, Coinbase, etc.).
