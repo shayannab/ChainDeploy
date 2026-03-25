@@ -17,9 +17,9 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-router-dom": "^7.13.1",
-    "viem": "^2.47.6",
+    "viem": "^2.21.0",
     "vite-plugin-node-polyfills": "^0.25.0",
-    "wagmi": "^3.5.0"
+    "wagmi": "^2.12.7"
   },
   "devDependencies": {
     "@types/react": "^18.2.0",
