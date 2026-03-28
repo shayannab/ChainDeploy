@@ -2,7 +2,7 @@
 # dockerfile_generator.py
 #
 # Generates a Dockerfile string based on the project type.
-# THE ABSOLUTE FINAL POLISH: Double quotes for Address expansion.
+# THE ABSOLUTE FINAL FIX: Template + Replacement for index.html.
 # ─────────────────────────────────────────────────────────
 
 import os
@@ -18,7 +18,7 @@ from models import DeploymentType
 def _wrap_with_fork(dockerfile: str, container_port: int, deploy_type: DeploymentType, has_frontend: bool = False) -> tuple[str, int]:
     """
     Wraps a Dockerfile with Anvil fork capabilities.
-    Uses Double Quotes for the HTML echo so the contract ADDR is filled in.
+    Uses Template + Replacement for index.html to avoid shell quoting errors.
     """
     cmd_match = re.search(r'CMD \[(.*)\]', dockerfile)
     if not cmd_match:
@@ -39,14 +39,14 @@ def _wrap_with_fork(dockerfile: str, container_port: int, deploy_type: Deploymen
     ]
 
     if new_port == 8080:
-        # Note: We use Double Quotes (") for the outer echo so that ${ADDR} is expanded
-        # We must escape the double quotes inside the HTML correctly.
-        html_content = (
+        # We use a placeholder '##ADDR##' and Single Quotes for the outer echo.
+        # This is 100% safe from shell quoting errors.
+        html_template = (
             '<html><body style=\"background:#0a0a0c;color:#fff;text-align:center;padding:10vh;font-family:sans-serif;\">'
             '<div style=\"background:#111;padding:40px;border-radius:20px;border:1px solid #333;display:inline-block;box-shadow:0 10px 30px rgba(0,0,0,0.5);\">'
             '<h1 style=\"color:#1db954;\">🚀 Simulation Ready</h1>'
             '<p>Status: <span style=\"color:#00ff00;\">LIVE</span></p>'
-            '<p style=\"font-family:monospace;color:#00ffd0;background:#222;padding:6px 10px;border-radius:6px;\">${ADDR:-Not found}</p>'
+            '<p style=\"font-family:monospace;color:#00ffd0;background:#222;padding:6px 10px;border-radius:6px;\">##ADDR##</p>'
             '<p style=\"opacity:0.6;margin-top:20px;\"><small>Code successful on QIE Fork.</small></p>'
             '</div></body></html>'
         )
@@ -54,7 +54,9 @@ def _wrap_with_fork(dockerfile: str, container_port: int, deploy_type: Deploymen
             "echo '📦 Deploying Contracts...'",
             "(npx hardhat run scripts/*.js --network localhost > log 2>&1 || echo 'No scripts' > log)",
             "ADDR=$(grep -oE '0x[a-fA-F0-9]{40}' log | tail -n 1)",
-            f"echo \"{html_content}\" > /app/index.html",
+            f"echo '{html_template}' > /app/index.html",
+            "# Use sed to replace the placeholder with the real address",
+            "sed -i \"s/##ADDR##/${ADDR:-Not found}/g\" /app/index.html",
             "echo '📡 Starting Simulation Dashboard...'",
             "npx -y http-server . -p 8080 -c-1"
         ]
