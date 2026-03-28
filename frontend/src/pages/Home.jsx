@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import axios from 'axios'
 import { Hammer, Wrench, Package, Atom, Code, FileCode, Globe, Sparkles, FolderArchive, ScanSearch, Zap, MapPin, Rocket, ShieldCheck, Lock } from 'lucide-react'
 import { useAccount, useSignMessage } from 'wagmi'
@@ -264,6 +264,7 @@ export default function Home() {
   const [token, setToken]             = useState(localStorage.getItem('cd_token'))
   const [isAuthenticating, setIsAuthenticating] = useState(false)
   const [authError, setAuthError]             = useState(false)
+  const authInProgress = useRef(false)
 
   const clearAuth = () => {
     localStorage.removeItem('cd_token')
@@ -273,8 +274,9 @@ export default function Home() {
 
   // ── Auth Logic ──────────────────────────────────────────
   const handleAuth = async () => {
-    if (!isConnected || !address || token) return
+    if (!isConnected || !address || token || authInProgress.current) return
     
+    authInProgress.current = true
     setIsAuthenticating(true)
     try {
       // 1. Get nonce
@@ -299,6 +301,7 @@ export default function Home() {
       setStatus({ type: 'error', msg: 'Authentication failed. Please try again.' })
     } finally {
       setIsAuthenticating(false)
+      authInProgress.current = false
     }
   }
 
