@@ -117,8 +117,9 @@ function DeploymentCard({ deployment, onDeleteRequest, onSelect }) {
           if (isBuilding) onSelect(deployment);
           else window.open(deployment.url, '_blank');
         }}>
-          {isBuilding ? 'View Pipeline' : 'Launch Site'}
+          {isBuilding ? 'View Pipeline' : (deployment.url?.includes('qiescan') ? 'View Explorer' : (deployment.deploy_type === 'QIE Fork' ? 'Open Simulator' : 'Launch Site'))}
         </button>
+        {deployment.deploy_type === 'QIE Fork' && <span className="type-badge foundry" style={{ fontSize: '0.6rem', padding: '2px 6px' }}>SIMULATED</span>}
         <span className={`status-dot ${statusClass(liveStatus)}`} style={{ padding: '4px 10px', fontSize: '0.7rem' }}>{liveStatus}</span>
       </div>
     </div>
@@ -205,13 +206,23 @@ function ProjectDetails({ project, onBack, onDelete }) {
                 <span style={{ color: 'var(--text-secondary)' }}>Status</span>
                 <span className={`status-dot ${statusClass(project.status)}`} style={{ padding: '2px 8px' }}>{project.status}</span>
               </div>
+              {project.contract_address && (
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>Contract</span>
+                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem', color: 'var(--primary)' }}>
+                    {project.contract_address.slice(0, 10)}...{project.contract_address.slice(-6)}
+                  </span>
+                </div>
+              )}
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span style={{ color: 'var(--text-secondary)' }}>URL</span>
-                <a href={project.url} target="_blank" rel="noreferrer" style={{ color: 'var(--primary)', fontFamily: 'var(--font-mono)' }}>{project.url}</a>
+                <span style={{ color: 'var(--text-secondary)' }}>URL / Explorer</span>
+                <a href={project.url} target="_blank" rel="noreferrer" style={{ color: 'var(--primary)', fontFamily: 'var(--font-mono)', fontSize: '0.8rem' }}>
+                  {project.url.includes('qiescan') ? 'View on QieScan' : project.url}
+                </a>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ color: 'var(--text-secondary)' }}>Container ID</span>
-                <span style={{ fontFamily: 'var(--font-mono)' }}>{project.container_id?.slice(0, 12)}</span>
+                <span style={{ fontFamily: 'var(--font-mono)' }}>{project.container_id ? project.container_id.slice(0, 12) : 'N/A'}</span>
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ color: 'var(--text-secondary)' }}>Created</span>
@@ -242,6 +253,7 @@ export default function Home() {
 
   const [file, setFile]               = useState(null)
   const [projectName, setProjectName] = useState('')
+  const [isFork, setIsFork]           = useState(true) // Default to Simulator for new users
   const [deployments, setDeployments] = useState([])
   const [status, setStatus]           = useState(null)
   const [dragOver, setDragOver]       = useState(false)
@@ -363,12 +375,19 @@ export default function Home() {
     const formData = new FormData()
     formData.append('file', file)
     formData.append('project_name', projectName || file.name.replace('.zip', ''))
+    formData.append('is_fork', isFork ? 'true' : 'false')
 
     try {
       const res = await api.post('/api/deploy', formData, {
         headers: { 'Content-Type': 'multipart/form-data' }
       })
-      setStatus({ type: 'success', msg: `🚀 Deployed to ${res.data.url}` })
+      
+      if (res.data.status === 'SUCCESS' && res.data.contract_address) {
+        setStatus({ type: 'success', msg: `🚀 Contract Deployed: ${res.data.contract_address.slice(0, 10)}...` })
+      } else {
+        setStatus({ type: 'success', msg: `🚀 Deployed to ${res.data.url}` })
+      }
+      
       setFile(null); setProjectName('')
       fetchDeployments()
     } catch (err) {
@@ -520,13 +539,25 @@ export default function Home() {
                 </div>
               </div>
 
-              <div className="form-row">
-                <div className="form-group">
+              <div className="form-row" style={{ gap: '24px' }}>
+                <div className="form-group" style={{ flex: 2 }}>
                   <label>PROJECT NAME</label>
                   <input type="text" placeholder="my-awesome-dapp" value={projectName} onChange={e => setProjectName(e.target.value)} />
                 </div>
-                <button className="btn-deploy" onClick={handleDeploy} disabled={loading || !file}>
-                  {loading ? 'Deploying...' : '🚀 START DEPLOYMENT'}
+                <div className="form-group" style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <input 
+                    type="checkbox" 
+                    id="fork-mode" 
+                    checked={isFork} 
+                    onChange={e => setIsFork(e.target.checked)} 
+                    style={{ width: '20px', height: '20px', accentColor: 'var(--primary)' }}
+                  />
+                  <label htmlFor="fork-mode" style={{ margin: 0, fontSize: '0.85rem', cursor: 'pointer' }}>
+                    🚀 SIMULATION MODE (FREE)
+                  </label>
+                </div>
+                <button className="btn-deploy" onClick={handleDeploy} disabled={loading || !file} style={{ flex: 1 }}>
+                  {loading ? 'Processing...' : 'DEPLOY PROJECT'}
                 </button>
               </div>
               {status && <div className={`status-banner ${status.type}`} style={{ marginTop: '20px' }}>{status.msg}</div>}

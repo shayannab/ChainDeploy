@@ -34,6 +34,7 @@ class DeploymentType(str, enum.Enum):
     RUST       = "Rust"           # Rust/Cargo app
     GO         = "Go"             # Go/Golang app
     STATIC     = "Static HTML"    # Plain HTML/CSS/JS
+    QIE_FORK   = "QIE Fork"       # Local Anvil fork of QIE Mainnet
 
 
 class User(Base):
@@ -68,8 +69,10 @@ class Deployment(Base):
     # e.g. 3001 means http://localhost:3001
     port         = Column(Integer, nullable=True)
 
+    # The port for the RPC Simulation (Anvil) if is_fork=True
+    rpc_port     = Column(Integer, nullable=True)
+
     # Docker's internal ID for the running container
-    # e.g. "a3f2b1c9d4e5..."  (Docker assigns this when container starts)
     container_id = Column(String, nullable=True)
 
     # The URL we return to the user

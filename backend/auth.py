@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 
 import database
 import models
-
+\
 # ── Configuration ──────────────────────────────────────────
 # In production, these would be in environment variables
 SECRET_KEY = os.getenv("SECRET_KEY", "chaindeploy_super_secret_key_12345")

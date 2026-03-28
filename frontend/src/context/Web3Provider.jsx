@@ -11,10 +11,22 @@ import {
   QueryClient,
 } from "@tanstack/react-query";
 
+const qie = {
+  id: 5656,
+  name: 'QIE Blockchain',
+  nativeCurrency: { name: 'QIE', symbol: 'QIE', decimals: 18 },
+  rpcUrls: {
+    default: { http: ['https://rpc-main1.qiblockchain.online'] },
+  },
+  blockExplorers: {
+    default: { name: 'QIE Explorer', url: 'https://mainnet.qiblockchain.online' },
+  },
+};
+
 const config = getDefaultConfig({
   appName: 'ChainDeploy',
   projectId: 'YOUR_PROJECT_ID', // In production, get one from cloud.walletconnect.com
-  chains: [mainnet, polygon, optimism, arbitrum, base],
+  chains: [qie, mainnet, polygon, optimism, arbitrum, base],
   ssr: false, 
 });
 

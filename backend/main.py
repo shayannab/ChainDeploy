@@ -16,6 +16,11 @@ import zipfile
 import shutil
 import subprocess
 import tempfile
+import re
+import json
+
+# ── Force Disable Hardhat Telemetry globally ─────────────
+os.environ["HARDHAT_DISABLE_TELEMETRY"] = "true"
 
 from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -27,6 +32,10 @@ import models
 import auth
 from detector import detect_project_type
 from dockerfile_generator import generate_dockerfile
+try:
+    from qie_deployer import deploy_to_qie
+except ImportError:
+    from .qie_deployer import deploy_to_qie
 
 # ── App initialization ───────────────────────────────────
 app = FastAPI(
@@ -36,56 +45,123 @@ app = FastAPI(
 )
 
 # ── CORS Middleware ──────────────────────────────────────
-# CORS = Cross-Origin Resource Sharing
-# Browsers block requests from one "origin" (e.g. localhost:5173)
-# to another (e.g. localhost:8000) by default — this is a security feature.
-# We tell FastAPI to ALLOW requests from our React frontend.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://localhost:3000"],
     allow_credentials=True,
-    allow_methods=["*"],   # allow GET, POST, DELETE, etc.
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # ── Create all database tables on startup ────────────────
-# This reads models.py and creates any missing tables.
-# It's safe to call even if tables already exist — it won't overwrite.
 models.Base.metadata.create_all(bind=database.engine)
 
 # ── Base directory for extracted user apps ───────────────
-# tempfile.gettempdir() returns the correct temp folder for ANY OS:
-#   Windows → C:\Users\<user>\AppData\Local\Temp
-#   Linux   → /tmp
-#   Mac     → /var/folders/...
-# FIX: Use a shorter folder name ('cd' instead of 'chaindeploy') to help with Windows 260 character path limits.
-# Even better: The user should EXCLUDE node_modules from their ZIP file!
 BASE_DEPLOYMENTS_DIR = os.path.join(tempfile.gettempdir(), "cd")
 os.makedirs(BASE_DEPLOYMENTS_DIR, exist_ok=True)
 
 
 # ─────────────────────────────────────────────────────────
 # Helper: find an open TCP port on the host machine
-#
-# We start searching from port 3100 and increment until we
-# find one that nothing is listening on.
 # ─────────────────────────────────────────────────────────
 def find_free_port(start: int = 3100) -> int:
     port = start
     while True:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            # try_to_connect returns 0 if port is OPEN (occupied), non-zero if free
             if s.connect_ex(("localhost", port)) != 0:
-                return port  # this port is free!
+                return port
         port += 1
 
 
 # ─────────────────────────────────────────────────────────
+# Helper: Run compilation for Hardhat/Foundry
+# ─────────────────────────────────────────────────────────
+def compile_project(app_dir: str, deploy_type: models.DeploymentType) -> tuple[bool, str]:
+    """
+    Returns (True, "") if compilation succeeds, (False, error_msg) otherwise.
+    """
+    if deploy_type == models.DeploymentType.HARDHAT:
+        print(f"Compiling Hardhat project in {app_dir}...")
+        
+        # ── Step 0: Ensure package.json exists ──
+        pkg_path = os.path.join(app_dir, "package.json")
+        if not os.path.exists(pkg_path):
+            print(f"DEBUG: package.json missing, generating it at {pkg_path}")
+            minimal_pkg = {
+                "name": "hardhat-project",
+                "version": "1.0.0",
+                "devDependencies": {
+                    "hardhat": "^2.19.0",
+                    "@nomicfoundation/hardhat-toolbox": "^4.0.0"
+                }
+            }
+            import json
+            with open(pkg_path, "w", encoding="utf-8") as f:
+                json.dump(minimal_pkg, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            print(f"DEBUG: package.json created. Size: {os.path.getsize(pkg_path)}")
+
+        if not os.path.exists(os.path.join(app_dir, "node_modules")):
+            print(f"DEBUG: node_modules missing, running 'npm install' in {app_dir}...", flush=True)
+            subprocess.run(["npm", "install", "--no-audit", "--no-fund"], cwd=app_dir, shell=True)
+            print("DEBUG: npm install complete", flush=True)
+        
+        print(f"DEBUG: Running compilation in {app_dir}", flush=True)
+        
+        # ── Step 0: Ensure hardhat is available ──
+        hh_bin = os.path.join(app_dir, "node_modules", ".bin", "hardhat")
+        if os.name == "nt":
+            hh_bin += ".cmd"
+        
+        if not os.path.exists(hh_bin):
+            print(f"DEBUG: {hh_bin} missing, falling back to npx", flush=True)
+            cmd = ["npx", "--yes", "hardhat", "compile"]
+        else:
+            cmd = [hh_bin, "compile"]
+
+        # ── Step 1: Run compilation ──
+        env = {**os.environ, "HARDHAT_DISABLE_TELEMETRY": "true"}
+        print(f"Executing: {' '.join(cmd)}", flush=True)
+        try:
+            result = subprocess.run(
+                cmd,
+                cwd=app_dir,
+                capture_output=False,
+                shell=True,
+                timeout=300,
+                env=env
+            )
+            if result.returncode != 0:
+                print(f"ERROR: Hardhat compile failed with code {result.returncode}", flush=True)
+                return False, f"Hardhat compilation failed with code {result.returncode}"
+        except subprocess.TimeoutExpired:
+            print("ERROR: Hardhat compilation timed out after 5 minutes", flush=True)
+            return False, "Hardhat compilation timed out"
+        except Exception as e:
+            print(f"ERROR: Hardhat compilation error: {str(e)}", flush=True)
+            return False, f"Compilation error: {str(e)}"
+
+        print("DEBUG: Hardhat compilation successful", flush=True)
+        return True, ""
+        
+    elif deploy_type == models.DeploymentType.FOUNDRY:
+        print(f"Running 'forge build' in {app_dir}...")
+        result = subprocess.run(
+            ["forge", "build"],
+            cwd=app_dir,
+            capture_output=False,
+            shell=True # For Windows
+        )
+        if result.returncode != 0:
+            return False, "Foundry compilation failed (check terminal output)"
+        return True, ""
+        
+    return True, ""
+
+
+# ─────────────────────────────────────────────────────────
 # ROUTE 1: Health check
-# GET /api/health
-#
-# Simple endpoint — just confirms the server is alive.
-# Used by Docker's health check and the frontend.
 # ─────────────────────────────────────────────────────────
 @app.get("/api/health")
 def health_check():
@@ -93,11 +169,9 @@ def health_check():
 
 # ─────────────────────────────────────────────────────────
 # AUTH ROUTE 1: Get Nonce
-# POST /api/auth/nonce
 # ─────────────────────────────────────────────────────────
 @app.post("/api/auth/nonce")
 def get_nonce(address: str, db: Session = Depends(database.get_db)):
-    # Check if user exists, if not create them
     user = db.query(models.User).filter(
         models.User.address == address.lower()
     ).first()
@@ -107,7 +181,6 @@ def get_nonce(address: str, db: Session = Depends(database.get_db)):
         db.add(user)
         db.commit()
     
-    # Generate new nonce
     nonce = auth.generate_nonce()
     user.nonce = nonce
     db.commit()
@@ -116,7 +189,6 @@ def get_nonce(address: str, db: Session = Depends(database.get_db)):
 
 # ─────────────────────────────────────────────────────────
 # AUTH ROUTE 2: Verify Signature & Login
-# POST /api/auth/verify
 # ─────────────────────────────────────────────────────────
 @app.post("/api/auth/verify")
 def verify(
@@ -131,157 +203,168 @@ def verify(
     if not user or not user.nonce:
         raise HTTPException(status_code=400, detail="Nonce not generated for this address")
     
-    # Verify the signature
     if not auth.verify_ethereum_signature(address, signature, user.nonce):
         raise HTTPException(status_code=401, detail="Invalid signature")
     
-    # Clear nonce after use
     user.nonce = None
     db.commit()
     
-    # Create JWT token
     access_token = auth.create_access_token(data={"sub": user.address})
     return {"access_token": access_token, "token_type": "bearer"}
 
 
 # ─────────────────────────────────────────────────────────
 # ROUTE 2: Deploy an app
-# POST /api/deploy
-#
-# This is the main endpoint. It:
-# 1. Accepts a ZIP file + optional project name
-# 2. Extracts it to a temp folder
-# 3. Detects the project type
-# 4. Writes a Dockerfile
-# 5. Builds the Docker image
-# 6. Runs the container on a free port
-# 7. Saves everything to the database
-# 8. Returns the deployment info (including URL)
 # ─────────────────────────────────────────────────────────
 @app.post("/api/deploy")
 async def deploy_app(
-    file: UploadFile = File(...),           # the uploaded ZIP file
-    project_name: str = Form("my-dapp"),   # optional name from the form
-    db: Session = Depends(database.get_db), # inject a DB session
-    current_user: models.User = Depends(auth.get_current_user) # Require auth
+    file: UploadFile = File(...),
+    project_name: str = Form("my-dapp"),
+    is_fork: bool = Form(False),
+    db: Session = Depends(database.get_db),
+    current_user: models.User = Depends(auth.get_current_user)
 ):
-    # ── Step 1: Create a unique ID for this deployment ──
-    app_id = str(uuid.uuid4())[:8]   # e.g. "a3f2b1c9"
+    # ── Step 1: Create a unique ID ──
+    app_id = str(uuid.uuid4()).split('-')[0]
     app_dir = os.path.join(BASE_DEPLOYMENTS_DIR, f"app-{app_id}")
     os.makedirs(app_dir, exist_ok=True)
 
-    # ── Step 2: Validate it's a ZIP file ────────────────
+    # ── Step 2: Validate ZIP ──
     if not (file.filename or "").endswith(".zip"):
         raise HTTPException(status_code=400, detail="Only .zip files are accepted")
 
-    # ── Step 3: Save the ZIP to disk ────────────────────
+    # ── Step 3: Save ZIP ──
     zip_path = os.path.join(app_dir, "upload.zip")
     with open(zip_path, "wb") as f:
-        contents = await file.read()  # await because file reading is async
+        contents = await file.read()
         f.write(contents)
 
-    # ── Step 4: Extract the ZIP ─────────────────────────
-    # zipfile.ZipFile opens the archive
-    # .extractall() unpacks everything into app_dir
+    # ── Step 4: Extract ZIP ──
     try:
         with zipfile.ZipFile(zip_path, "r") as zip_ref:
             zip_ref.extractall(app_dir)
-        os.remove(zip_path)  # delete the raw ZIP, we have the extracted files
+        os.remove(zip_path)
 
-        # If the ZIP contained a single top-level folder, move its contents up
-        # e.g. my-app.zip → my-app/ → [files]
-        # We want app_dir to directly contain the files, not a subfolder.
         items = os.listdir(app_dir)
         if len(items) == 1 and os.path.isdir(os.path.join(app_dir, items[0])):
             nested_dir = os.path.join(app_dir, items[0])
             for item in os.listdir(nested_dir):
                 shutil.move(os.path.join(nested_dir, item), app_dir)
             os.rmdir(nested_dir)
+        
+        # ── Step 4.1: Force-Cleanup node_modules ──
+        # This prevents 400MB+ Docker context transfers which kill performance.
+        node_modules_path = os.path.join(app_dir, "node_modules")
+        if os.path.exists(node_modules_path):
+            print(f"DEBUG: Removing pre-zipped node_modules from {app_dir} to speed up build...", flush=True)
+            shutil.rmtree(node_modules_path, ignore_errors=True)
 
     except Exception as e:
         shutil.rmtree(app_dir, ignore_errors=True)
-        # Check if it looks like a Windows path length error
-        if "node_modules" in str(e) and os.name == "nt":
-            raise HTTPException(
-                status_code=400, 
-                detail="ZIP extraction failed. Your project contains a 'node_modules' folder that is too deep for Windows. Please DELETE 'node_modules' before zipping! (The cloud builder will install them automatically)."
-            )
-        raise HTTPException(status_code=500, detail=f"Extraction error: {str(e)}")
+        err_msg = str(e)
+        if "node_modules" in err_msg and os.name == "nt":
+            raise HTTPException(status_code=400, detail="Extraction failed. Delete node_modules before zipping!")
+        raise HTTPException(status_code=500, detail=f"Extraction error: {err_msg}")
 
-    # ── Step 5: Detect the project type ─────────────────
+    # ── Step 5: Detect Type ──
     deploy_type = detect_project_type(app_dir)
 
-    # ── Step 6: Create a DB record (status = PENDING) ───
+    # ── Step 5.1: Compile ──
+    SC_TYPES = [models.DeploymentType.HARDHAT, models.DeploymentType.FOUNDRY]
+    if deploy_type in SC_TYPES:
+        success, error_msg = compile_project(app_dir, deploy_type)
+        if not success:
+            shutil.rmtree(app_dir, ignore_errors=True)
+            raise HTTPException(status_code=400, detail=f"Compilation failed: {error_msg[:500]}")
+    
+    print("DEBUG: Step 6: Creating DB Record...", flush=True)
+
+    # ── Step 6: Create DB Record ──
     image_name = f"chaindeploy-app-{app_id}"
     deployment = models.Deployment(
         project_name=project_name,
         deploy_type=deploy_type.value,
         status=models.DeploymentStatus.BUILDING.value,
         image_name=image_name,
-        owner_id=current_user.id # Link to owner
+        owner_id=current_user.id
     )
     db.add(deployment)
     db.commit()
-    db.refresh(deployment)  # reload to get the auto-generated id
+    db.refresh(deployment)
 
-    # ── Step 7: Generate and write the Dockerfile ───────
-    dockerfile_content, container_port = generate_dockerfile(deploy_type, app_dir)
+    # ── Step 6.1: Direct Mainnet Deployment ──
+    SC_TYPES = [models.DeploymentType.HARDHAT, models.DeploymentType.FOUNDRY]
+    if deploy_type in SC_TYPES and not is_fork:
+        print(f"DEBUG: Step 6.1: Starting Direct Mainnet Deployment for {deploy_type}...", flush=True)
+        deployment.status = "DEPLOYING"
+        db.commit()
+        
+        success, result_val = deploy_to_qie(app_dir, project_name, deploy_type)
+        if success:
+            deployment.status = models.DeploymentStatus.RUNNING.value
+            deployment.url = f"https://mainnet.qiescan.io/address/{result_val}"
+            db.commit()
+            return {
+                "id": deployment.id,
+                "project_name": deployment.project_name,
+                "status": "SUCCESS",
+                "contract_address": result_val,
+                "explorer_url": deployment.url
+            }
+        else:
+            deployment.status = models.DeploymentStatus.FAILED.value
+            deployment.error = result_val
+            db.commit()
+            raise HTTPException(status_code=500, detail=f"QIE Deployment failed: {result_val[:500]}")
 
+    # ── Step 7: Build Docker ──
+    print(f"DEBUG: Step 7: Generating Dockerfile (is_fork={is_fork})...", flush=True)
+    dockerfile_content, container_port = generate_dockerfile(deploy_type, app_dir, is_fork)
     dockerfile_path = os.path.join(app_dir, "Dockerfile")
-    # FIX: Use encoding="utf-8" for Windows compatibility
     with open(dockerfile_path, "w", encoding="utf-8") as f:
         f.write(dockerfile_content)
 
-    # ── Step 8: Build the Docker image ──────────────────
-    # subprocess.run() runs a shell command and waits for it to finish
-    # capture_output=True captures stdout/stderr so we can read them
+    print(f"DEBUG: Step 7.1: Running Docker Build for {image_name}...", flush=True)
     try:
         build_result = subprocess.run(
             ["docker", "build", "-t", image_name, "."],
-            cwd=app_dir,                  # run the command FROM the app_dir
-            capture_output=True,
-            text=True,                    # return output as string, not bytes
-            timeout=600                   # max 10 minutes to build
+            cwd=app_dir,
+            capture_output=False, # Show build progress to user
+            text=True,
+            timeout=600
         )
-    except subprocess.TimeoutExpired as e:
-        # FIX: Use .value to convert enum to string
-        deployment.status = models.DeploymentStatus.FAILED.value
-        deployment.error = f"Docker build timed out after 10 minutes. Please ensure your dependencies are correct."
-        db.commit()
-        raise HTTPException(
-            status_code=500,
-            detail="Docker build timed out."
-        )
+        if build_result.returncode != 0:
+            deployment.status = models.DeploymentStatus.FAILED.value
+            err_msg = build_result.stderr or ""
+            deployment.error = err_msg if len(err_msg) < 1000 else err_msg[-1000:]
+            db.commit()
+            detail_msg = err_msg if len(err_msg) < 500 else err_msg[-500:]
+            raise HTTPException(status_code=500, detail=f"Docker build failed: {detail_msg}")
+
     except Exception as e:
         deployment.status = models.DeploymentStatus.FAILED.value
         deployment.error = str(e)
         db.commit()
         raise HTTPException(status_code=500, detail=str(e))
 
-    if build_result.returncode != 0:
-        # Build failed — save the error and mark as FAILED
-        # FIX: Use .value to convert enum to string
-        deployment.status = models.DeploymentStatus.FAILED.value
-        deployment.error = str(build_result.stderr or "")[-1000:]  # last 1000 chars of error
-        db.commit()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Docker build failed: {str(build_result.stderr or '')[-500:]}"
-        )
-
-    # ── Step 9: Find a free host port ───────────────────
+    # ── Step 8: Run ──
+    print("DEBUG: Step 8: Finding free port and running container...", flush=True)
     host_port = find_free_port()
+    
+    # ── Step 8.1: Handle RPC Port for Simulation Mode ──
+    extra_ports = []
+    rpc_host_port = None
+    if is_fork:
+        rpc_host_port = find_free_port(start=host_port + 1)
+        extra_ports = ["-p", f"{rpc_host_port}:8545"]
+        print(f"DEBUG: Mapping RPC port 8545 to host port {rpc_host_port}", flush=True)
 
-    # ── Step 10: Run the container ───────────────────────
-    # -d              = detached mode (run in background)
-    # -p HOST:CONTAINER = map host port to container port
-    # --name          = give the container a name so we can manage it later
     run_result = subprocess.run(
         [
             "docker", "run", "-d",
             "-p", f"{host_port}:{container_port}",
+            *extra_ports,
             "--name", f"chaindeploy-{app_id}",
-            # Pass .env file through if it exists in the uploaded project
             *(["--env-file", os.path.join(app_dir, ".env")]
               if os.path.exists(os.path.join(app_dir, ".env")) else []),
             image_name
@@ -292,30 +375,23 @@ async def deploy_app(
     )
 
     if run_result.returncode != 0:
-        # FIX: Use .value to convert enum to string
         deployment.status = models.DeploymentStatus.FAILED.value
         deployment.error = run_result.stderr
         db.commit()
-        raise HTTPException(
-            status_code=500,
-            detail=f"Docker run failed: {run_result.stderr}"
-        )
+        raise HTTPException(status_code=500, detail=f"Docker run failed: {run_result.stderr}")
 
-    # ── Step 11: Save success info to database ──────────
-    container_id = run_result.stdout.strip()   # Docker prints the container ID
+    # ── Step 9: Save Success ──
+    container_id = run_result.stdout.strip()
     url = f"http://localhost:{host_port}"
-
-    # FIX: Use .value to convert enum to string
     deployment.status = models.DeploymentStatus.RUNNING.value
     deployment.port = host_port
+    deployment.rpc_port = rpc_host_port
     deployment.container_id = container_id
     deployment.url = url
     db.commit()
 
-    # ── Clean up the source files (image is already built) ──
     shutil.rmtree(app_dir, ignore_errors=True)
 
-    # ── Return the deployment info to the frontend ───────
     return {
         "id": deployment.id,
         "project_name": deployment.project_name,
@@ -323,16 +399,13 @@ async def deploy_app(
         "status": deployment.status,
         "url": url,
         "port": host_port,
-        "container_id": str(container_id)[:12],
+        "rpc_port": rpc_host_port,
+        "container_id": container_id[:12],
     }
 
 
 # ─────────────────────────────────────────────────────────
 # ROUTE 3: List all deployments
-# GET /api/deployments
-#
-# Returns all deployments in the database, newest first.
-# The frontend dashboard calls this to show the list of apps.
 # ─────────────────────────────────────────────────────────
 @app.get("/api/deployments")
 def list_deployments(
@@ -341,18 +414,14 @@ def list_deployments(
 ):
     deployments = (
         db.query(models.Deployment)
-        .filter(models.Deployment.owner_id == current_user.id) # Filter by owner
-        .order_by(models.Deployment.created_at.desc())  # newest first
+        .filter(models.Deployment.owner_id == current_user.id)
+        .order_by(models.Deployment.created_at.desc())
         .all()
     )
     return deployments
 
-
 # ─────────────────────────────────────────────────────────
-# ROUTE 4: Stop and delete a deployment
-# DELETE /api/deployments/{deployment_id}
-#
-# Stops the Docker container and removes it from the DB.
+# ROUTE 4: Delete deployment
 # ─────────────────────────────────────────────────────────
 @app.delete("/api/deployments/{deployment_id}")
 def delete_deployment(
@@ -362,28 +431,22 @@ def delete_deployment(
 ):
     deployment = db.query(models.Deployment).filter(
         models.Deployment.id == deployment_id,
-        models.Deployment.owner_id == current_user.id # Ensure ownership
+        models.Deployment.owner_id == current_user.id
     ).first()
 
     if not deployment:
         raise HTTPException(status_code=404, detail="Deployment not found")
 
-    # Stop and remove the Docker container if it's running
     if deployment.container_id:
-        subprocess.run(["docker", "stop", deployment.container_id],
-                      capture_output=True)
-        subprocess.run(["docker", "rm", deployment.container_id],
-                      capture_output=True)
+        subprocess.run(["docker", "stop", deployment.container_id], capture_output=True)
+        subprocess.run(["docker", "rm", deployment.container_id], capture_output=True)
 
     db.delete(deployment)
     db.commit()
-
-    return {"message": f"Deployment {deployment_id} deleted successfully"}
-
+    return {"message": "Deleted successfully"}
 
 # ─────────────────────────────────────────────────────────
-# ROUTE 5: Get live status of a container
-# GET /api/deployments/{deployment_id}/status
+# ROUTE 5: Get Status
 # ─────────────────────────────────────────────────────────
 @app.get("/api/deployments/{deployment_id}/status")
 def get_deployment_status(
@@ -403,7 +466,6 @@ def get_deployment_status(
         return {"status": deployment.status}
 
     try:
-        # Query docker for the real container status
         result = subprocess.run(
             ["docker", "inspect", "-f", "{{.State.Status}}", deployment.container_id],
             capture_output=True,
@@ -411,24 +473,15 @@ def get_deployment_status(
             timeout=2
         )
         docker_status = result.stdout.strip() if result.returncode == 0 else "unknown"
-        
-        # Sync DB status with reality if it changed
         if docker_status == "running" and deployment.status != models.DeploymentStatus.RUNNING.value:
             deployment.status = models.DeploymentStatus.RUNNING.value
             db.commit()
-        elif docker_status == "exited" and deployment.status != models.DeploymentStatus.FAILED.value:
-            # We don't automatically set to FAILED, maybe it just finished?
-            # But for dApps, we'll mark as CRASHED/STOPPED
-            pass
-            
         return {"status": docker_status, "db_status": deployment.status}
     except Exception:
         return {"status": deployment.status}
 
-
 # ─────────────────────────────────────────────────────────
-# ROUTE 6: Stream real-time logs from a container
-# GET /api/deployments/{deployment_id}/stream-logs
+# ROUTE 6: Stream Logs
 # ─────────────────────────────────────────────────────────
 @app.get("/api/deployments/{deployment_id}/stream-logs")
 def stream_logs(
@@ -445,18 +498,15 @@ def stream_logs(
         raise HTTPException(status_code=404, detail="Deployment not found")
         
     if not deployment.container_id:
-        return StreamingResponse(iter(["data: Container not started yet...\n\n"]), media_type="text/event-stream")
+        return StreamingResponse(iter(["data: Building...\n\n"]), media_type="text/event-stream")
 
     def log_generator():
-        # --follow = keep the stream open
-        # --tail   = start with the last 20 lines
         process = subprocess.Popen(
             ["docker", "logs", "--follow", "--tail", "20", deployment.container_id],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True
         )
-        
         try:
             for line in iter(process.stdout.readline, ""):
                 yield f"data: {line}\n\n"
@@ -466,13 +516,8 @@ def stream_logs(
 
     return StreamingResponse(log_generator(), media_type="text/event-stream")
 
-
 # ─────────────────────────────────────────────────────────
-# ROUTE 7: Classic logs (Fallback)
-# GET /api/deployments/{deployment_id}/logs
-#
-# Returns the last 100 lines of container logs.
-# Useful for debugging failed or misbehaving deployments.
+# ROUTE 7: Classic Logs
 # ─────────────────────────────────────────────────────────
 @app.get("/api/deployments/{deployment_id}/logs")
 def get_logs(
@@ -482,27 +527,21 @@ def get_logs(
 ):
     deployment = db.query(models.Deployment).filter(
         models.Deployment.id == deployment_id,
-        models.Deployment.owner_id == current_user.id # Ensure ownership
+        models.Deployment.owner_id == current_user.id
     ).first()
 
     if not deployment:
         raise HTTPException(status_code=404, detail="Deployment not found")
 
-    if deployment.status == models.DeploymentStatus.BUILDING.value:
-        return {"logs": "Building image... This typically takes 30-90 seconds. Please wait.\nFetching layers...\nInstalling dependencies...\nExecuting docker build..."}
-
     if deployment.status == models.DeploymentStatus.FAILED.value:
-        return {"logs": f"Build Failed:\n\n{deployment.error or 'Unknown error occurred.'}"}
+        return {"logs": f"Build Failed:\n\n{deployment.error or 'Error'}"}
 
     if not deployment.container_id:
-        return {"logs": "Container ID not set. Please contact support."}
+        return {"logs": "Not available."}
 
     result = subprocess.run(
         ["docker", "logs", "--tail", "100", deployment.container_id],
         capture_output=True,
         text=True
     )
-
-    return {
-        "logs": result.stdout + result.stderr
-    }
+    return {"logs": result.stdout + result.stderr}
