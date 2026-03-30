@@ -20,6 +20,15 @@ def migrate():
         cursor.execute("ALTER TABLE deployments ADD COLUMN rpc_port INTEGER")
         conn.commit()
         print("Migration successful!")
+    try:
+        print("Checking for contract_address column...")
+        cursor.execute("SELECT contract_address FROM deployments LIMIT 1")
+        print("Column 'contract_address' already exists.")
+    except sqlite3.OperationalError:
+        print("Adding column 'contract_address' to 'deployments' table...")
+        cursor.execute("ALTER TABLE deployments ADD COLUMN contract_address TEXT")
+        conn.commit()
+        print("Migration successful (contract_address)!")
     finally:
         conn.close()
 

@@ -16,13 +16,12 @@ import zipfile
 import shutil
 import subprocess
 import tempfile
-import re
 import json
-
+from datetime import datetime
 # ── Force Disable Hardhat Telemetry globally ─────────────
 os.environ["HARDHAT_DISABLE_TELEMETRY"] = "true"
 
-from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -76,7 +75,7 @@ def find_free_port(start: int = 3100) -> int:
 # ─────────────────────────────────────────────────────────
 # Helper: Run compilation for Hardhat/Foundry
 # ─────────────────────────────────────────────────────────
-def compile_project(app_dir: str, deploy_type: models.DeploymentType) -> tuple[bool, str]:
+def compile_project(app_dir: str, deploy_type: models.DeploymentType, log_file=None) -> tuple[bool, str]:
     """
     Returns (True, "") if compilation succeeds, (False, error_msg) otherwise.
     """
@@ -103,11 +102,10 @@ def compile_project(app_dir: str, deploy_type: models.DeploymentType) -> tuple[b
             print(f"DEBUG: package.json created. Size: {os.path.getsize(pkg_path)}")
 
         if not os.path.exists(os.path.join(app_dir, "node_modules")):
-            print(f"DEBUG: node_modules missing, running 'npm install' in {app_dir}...", flush=True)
-            subprocess.run(["npm", "install", "--no-audit", "--no-fund"], cwd=app_dir, shell=True)
-            print("DEBUG: npm install complete", flush=True)
-        
-        print(f"DEBUG: Running compilation in {app_dir}", flush=True)
+            if log_file:
+                log_file.write("DEBUG: node_modules missing, running 'npm install'...\n")
+                log_file.flush()
+            subprocess.run(["npm", "install", "--no-audit", "--no-fund"], cwd=app_dir, shell=True, stdout=log_file, stderr=log_file)
         
         # ── Step 0: Ensure hardhat is available ──
         hh_bin = os.path.join(app_dir, "node_modules", ".bin", "hardhat")
@@ -127,7 +125,8 @@ def compile_project(app_dir: str, deploy_type: models.DeploymentType) -> tuple[b
             result = subprocess.run(
                 cmd,
                 cwd=app_dir,
-                capture_output=False,
+                stdout=log_file if log_file else None,
+                stderr=log_file if log_file else None,
                 shell=True,
                 timeout=300,
                 env=env
@@ -146,11 +145,14 @@ def compile_project(app_dir: str, deploy_type: models.DeploymentType) -> tuple[b
         return True, ""
         
     elif deploy_type == models.DeploymentType.FOUNDRY:
-        print(f"Running 'forge build' in {app_dir}...")
+        if log_file:
+            log_file.write(f"Running 'forge build' in {app_dir}...\n")
+            log_file.flush()
         result = subprocess.run(
             ["forge", "build"],
             cwd=app_dir,
-            capture_output=False,
+            stdout=log_file if log_file else None,
+            stderr=log_file if log_file else None,
             shell=True # For Windows
         )
         if result.returncode != 0:
@@ -221,6 +223,7 @@ async def deploy_app(
     file: UploadFile = File(...),
     project_name: str = Form("my-dapp"),
     is_fork: bool = Form(False),
+    background_tasks: BackgroundTasks = None, # Added for async support
     db: Session = Depends(database.get_db),
     current_user: models.User = Depends(auth.get_current_user)
 ):
@@ -269,22 +272,14 @@ async def deploy_app(
     # ── Step 5: Detect Type ──
     deploy_type = detect_project_type(app_dir)
 
-    # ── Step 5.1: Compile ──
-    SC_TYPES = [models.DeploymentType.HARDHAT, models.DeploymentType.FOUNDRY]
-    if deploy_type in SC_TYPES:
-        success, error_msg = compile_project(app_dir, deploy_type)
-        if not success:
-            shutil.rmtree(app_dir, ignore_errors=True)
-            raise HTTPException(status_code=400, detail=f"Compilation failed: {error_msg[:500]}")
+    print("DEBUG: Step 6: Creating DB Record and starting background task...", flush=True)
     
-    print("DEBUG: Step 6: Creating DB Record...", flush=True)
-
     # ── Step 6: Create DB Record ──
     image_name = f"chaindeploy-app-{app_id}"
     deployment = models.Deployment(
         project_name=project_name,
         deploy_type=deploy_type.value,
-        status=models.DeploymentStatus.BUILDING.value,
+        status="BUILDING",
         image_name=image_name,
         owner_id=current_user.id
     )
@@ -292,116 +287,170 @@ async def deploy_app(
     db.commit()
     db.refresh(deployment)
 
-    # ── Step 6.1: Direct Mainnet Deployment ──
-    SC_TYPES = [models.DeploymentType.HARDHAT, models.DeploymentType.FOUNDRY]
-    if deploy_type in SC_TYPES and not is_fork:
-        print(f"DEBUG: Step 6.1: Starting Direct Mainnet Deployment for {deploy_type}...", flush=True)
-        deployment.status = "DEPLOYING"
-        db.commit()
-        
-        success, result_val = deploy_to_qie(app_dir, project_name, deploy_type)
-        if success:
-            deployment.status = models.DeploymentStatus.RUNNING.value
-            deployment.url = f"https://mainnet.qiescan.io/address/{result_val}"
-            db.commit()
-            return {
-                "id": deployment.id,
-                "project_name": deployment.project_name,
-                "status": "SUCCESS",
-                "contract_address": result_val,
-                "explorer_url": deployment.url
-            }
-        else:
-            deployment.status = models.DeploymentStatus.FAILED.value
-            deployment.error = result_val
-            db.commit()
-            raise HTTPException(status_code=500, detail=f"QIE Deployment failed: {result_val[:500]}")
-
-    # ── Step 7: Build Docker ──
-    print(f"DEBUG: Step 7: Generating Dockerfile (is_fork={is_fork})...", flush=True)
-    dockerfile_content, container_port = generate_dockerfile(deploy_type, app_dir, is_fork)
-    dockerfile_path = os.path.join(app_dir, "Dockerfile")
-    with open(dockerfile_path, "w", encoding="utf-8") as f:
-        f.write(dockerfile_content)
-
-    print(f"DEBUG: Step 7.1: Running Docker Build for {image_name}...", flush=True)
-    try:
-        build_result = subprocess.run(
-            ["docker", "build", "-t", image_name, "."],
-            cwd=app_dir,
-            capture_output=False, # Show build progress to user
-            text=True,
-            timeout=600
-        )
-        if build_result.returncode != 0:
-            deployment.status = models.DeploymentStatus.FAILED.value
-            err_msg = build_result.stderr or ""
-            deployment.error = err_msg if len(err_msg) < 1000 else err_msg[-1000:]
-            db.commit()
-            detail_msg = err_msg if len(err_msg) < 500 else err_msg[-500:]
-            raise HTTPException(status_code=500, detail=f"Docker build failed: {detail_msg}")
-
-    except Exception as e:
-        deployment.status = models.DeploymentStatus.FAILED.value
-        deployment.error = str(e)
-        db.commit()
-        raise HTTPException(status_code=500, detail=str(e))
-
-    # ── Step 8: Run ──
-    print("DEBUG: Step 8: Finding free port and running container...", flush=True)
-    host_port = find_free_port()
-    
-    # ── Step 8.1: Handle RPC Port for Simulation Mode ──
-    extra_ports = []
-    rpc_host_port = None
-    if is_fork:
-        rpc_host_port = find_free_port(start=host_port + 1)
-        extra_ports = ["-p", f"{rpc_host_port}:8545"]
-        print(f"DEBUG: Mapping RPC port 8545 to host port {rpc_host_port}", flush=True)
-
-    run_result = subprocess.run(
-        [
-            "docker", "run", "-d",
-            "-p", f"{host_port}:{container_port}",
-            *extra_ports,
-            "--name", f"chaindeploy-{app_id}",
-            *(["--env-file", os.path.join(app_dir, ".env")]
-              if os.path.exists(os.path.join(app_dir, ".env")) else []),
-            image_name
-        ],
-        capture_output=True,
-        text=True,
-        timeout=30
+    # ── Step 6.1: Start Background Deployment ──
+    background_tasks.add_task(
+        run_deployment_task,
+        deployment.id,
+        app_id,
+        app_dir,
+        project_name,
+        deploy_type,
+        image_name,
+        is_fork
     )
-
-    if run_result.returncode != 0:
-        deployment.status = models.DeploymentStatus.FAILED.value
-        deployment.error = run_result.stderr
-        db.commit()
-        raise HTTPException(status_code=500, detail=f"Docker run failed: {run_result.stderr}")
-
-    # ── Step 9: Save Success ──
-    container_id = run_result.stdout.strip()
-    url = f"http://localhost:{host_port}"
-    deployment.status = models.DeploymentStatus.RUNNING.value
-    deployment.port = host_port
-    deployment.rpc_port = rpc_host_port
-    deployment.container_id = container_id
-    deployment.url = url
-    db.commit()
-
-    shutil.rmtree(app_dir, ignore_errors=True)
 
     return {
         "id": deployment.id,
         "project_name": deployment.project_name,
         "deploy_type": deployment.deploy_type,
-        "status": deployment.status,
-        "url": url,
-        "port": host_port,
-        "rpc_port": rpc_host_port,
-        "container_id": container_id[:12],
+        "status": "BUILDING",
+        "url": "", # Placeholder until it's running
+        "created_at": str(datetime.utcnow())
     }
+
+
+# ─────────────────────────────────────────────────────────
+# Internal: The Async Deployment Worker
+# ─────────────────────────────────────────────────────────
+def run_deployment_task(deployment_id: int, app_id: str, app_dir: str, project_name: str, deploy_type: models.DeploymentType, image_name: str, is_fork: bool):
+    """
+    Runs Docker Build and Run in the background.
+    Redirects logs to backend/logs/build_{id}.log for live streaming.
+    """
+    db = database.SessionLocal()
+    deployment = db.query(models.Deployment).filter(models.Deployment.id == deployment_id).first()
+    if not deployment:
+        db.close()
+        return
+
+    log_path = os.path.join("logs", f"build_{deployment_id}.log")
+    os.makedirs("logs", exist_ok=True)
+    
+    try:
+        with open(log_path, "w", encoding="utf-8") as log_file:
+            # ── Step 0: Async Compilation ──
+            SC_TYPES = [models.DeploymentType.HARDHAT, models.DeploymentType.FOUNDRY]
+            if deploy_type in SC_TYPES:
+                log_file.write(f"📦 Found {deploy_type} project. Starting compilation...\n")
+                log_file.flush()
+                
+                success, error_msg = compile_project(app_dir, deploy_type, log_file=log_file)
+                if not success:
+                    deployment.status = models.DeploymentStatus.FAILED.value
+                    deployment.error = error_msg
+                    db.commit()
+                    log_file.write(f"❌ Compilation Failed: {error_msg}\n")
+                    db.close()
+                    return
+
+            # ── Step A: Direct Mainnet Deployment ──
+            SC_TYPES = [models.DeploymentType.HARDHAT, models.DeploymentType.FOUNDRY]
+            if deploy_type in SC_TYPES and not is_fork:
+                log_file.write(f"🚀 Starting Direct Mainnet Deployment for {deploy_type}...\n")
+                log_file.flush()
+                
+                success, result_val = deploy_to_qie(app_dir, project_name, deploy_type, log_file=log_file)
+                if success:
+                    deployment.status = models.DeploymentStatus.RUNNING.value
+                    deployment.contract_address = result_val
+                    deployment.url = f"https://mainnet.qiescan.io/address/{result_val}"
+                    db.commit()
+                    log_file.write(f"✅ Mainnet Success! Contract: {result_val}\n")
+                else:
+                    deployment.status = models.DeploymentStatus.FAILED.value
+                    deployment.error = result_val
+                    db.commit()
+                    log_file.write(f"❌ Mainnet Failed: {result_val}\n")
+                
+                db.close()
+                return
+
+            # ── Step B: Docker Build ──
+            log_file.write(f"🏗️ Generating Dockerfile (is_fork={is_fork})...\n")
+            log_file.flush()
+            dockerfile_content, container_port = generate_dockerfile(deploy_type, app_dir, is_fork)
+            with open(os.path.join(app_dir, "Dockerfile"), "w", encoding="utf-8") as f:
+                f.write(dockerfile_content)
+
+            log_file.write(f"🏗️ Running Docker Build for {image_name}...\n")
+            log_file.flush()
+            
+            build_proc = subprocess.Popen(
+                ["docker", "build", "-t", image_name, "."],
+                cwd=app_dir,
+                stdout=log_file,
+                stderr=log_file,
+                text=True,
+                shell=True
+            )
+            build_proc.wait()
+
+            if build_proc.returncode != 0:
+                deployment.status = models.DeploymentStatus.FAILED.value
+                deployment.error = "Docker build failed. Check logs."
+                db.commit()
+                log_file.write(f"❌ Build Failed with code {build_proc.returncode}\n")
+                db.close()
+                return
+
+            # ── Step C: Docker Run ──
+            log_file.write(f"📡 Finding free port and running container...\n")
+            log_file.flush()
+            host_port = find_free_port()
+            
+            extra_ports = []
+            rpc_host_port = None
+            if is_fork:
+                rpc_host_port = find_free_port(start=host_port + 1)
+                extra_ports = ["-p", f"{rpc_host_port}:8545"]
+
+            run_proc = subprocess.Popen(
+                [
+                    "docker", "run", "-d",
+                    "-p", f"{host_port}:{container_port}",
+                    *extra_ports,
+                    "--name", f"chaindeploy-{app_id}",
+                    *(["--env-file", os.path.join(app_dir, ".env")]
+                      if os.path.exists(os.path.join(app_dir, ".env")) else []),
+                    image_name
+                ],
+                stdout=subprocess.PIPE,
+                stderr=log_file,
+                text=True,
+                shell=True
+            )
+            stdout, _ = run_proc.communicate()
+
+            if run_proc.returncode != 0:
+                deployment.status = models.DeploymentStatus.FAILED.value
+                deployment.error = "Docker run failed."
+                db.commit()
+                log_file.write(f"❌ Run Failed with code {run_proc.returncode}\n")
+                db.close()
+                return
+
+            # ── Step D: Success ──
+            container_id = stdout.strip()
+            url = f"http://localhost:{host_port}"
+            deployment.status = models.DeploymentStatus.RUNNING.value
+            deployment.port = host_port
+            deployment.rpc_port = rpc_host_port
+            deployment.container_id = container_id
+            deployment.url = url
+            db.commit()
+            
+            log_file.write(f"✅ Container Link: {url}\n")
+            log_file.write(f"✅ Container ID: {container_id[:12]}\n")
+            log_file.flush()
+
+    except Exception as e:
+        deployment.status = models.DeploymentStatus.FAILED.value
+        deployment.error = str(e)
+        db.commit()
+        print(f"ERROR in background task: {e}")
+    finally:
+        shutil.rmtree(app_dir, ignore_errors=True)
+        db.close()
 
 
 # ─────────────────────────────────────────────────────────
@@ -498,14 +547,39 @@ def stream_logs(
         raise HTTPException(status_code=404, detail="Deployment not found")
         
     if not deployment.container_id:
-        return StreamingResponse(iter(["data: Building...\n\n"]), media_type="text/event-stream")
+        def build_log_generator():
+            log_path = os.path.join("logs", f"build_{deployment_id}.log")
+            if not os.path.exists(log_path):
+                yield "data: Preparing build environment...\n\n"
+                return
+            
+            with open(log_path, "r", encoding="utf-8") as f:
+                # First, send everything written so far
+                lines = f.readlines()
+                for line in lines:
+                    yield f"data: {line}\n\n"
+                
+                # Then, keep polling for new lines until container is ready or build fails
+                import time
+                while True:
+                    line = f.readline()
+                    if line:
+                        yield f"data: {line}\n\n"
+                    else:
+                        db.refresh(deployment)
+                        if deployment.container_id or deployment.status in ["RUNNING", "FAILED"]:
+                            break
+                        time.sleep(0.5)
+        
+        return StreamingResponse(build_log_generator(), media_type="text/event-stream")
 
     def log_generator():
         process = subprocess.Popen(
-            ["docker", "logs", "--follow", "--tail", "20", deployment.container_id],
+            ["docker", "logs", "--follow", "--tail", "100", deployment.container_id],
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            text=True
+            text=True,
+            shell=True
         )
         try:
             for line in iter(process.stdout.readline, ""):

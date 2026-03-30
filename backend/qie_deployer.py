@@ -5,7 +5,33 @@ import shutil
 
 from models import DeploymentType
 
-def deploy_to_qie(app_dir: str, project_name: str, deploy_type: DeploymentType = DeploymentType.HARDHAT) -> tuple[bool, str]:
+def run_and_stream(cmd, cwd, env, log_file=None):
+    """Runs a command and streams output to log_file while capturing it."""
+    stdout_data = []
+    
+    # Use Popen to stream
+    process = subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        shell=True if isinstance(cmd, list) and os.name == 'nt' else (True if isinstance(cmd, str) else False)
+    )
+
+    for line in iter(process.stdout.readline, ""):
+        if log_file:
+            log_file.write(line)
+            log_file.flush()
+        stdout_data.append(line)
+        print(line, end="") # Also print to backend console for debugging
+
+    process.stdout.close()
+    returncode = process.wait()
+    return returncode, "".join(stdout_data)
+
+def deploy_to_qie(app_dir: str, project_name: str, deploy_type: DeploymentType = DeploymentType.HARDHAT, log_file=None) -> tuple[bool, str]:
     """
     1. Validates deployer key
     2. Injects QIE Mainnet network into hardhat.config.js (for Hardhat)
@@ -41,7 +67,10 @@ def deploy_to_qie(app_dir: str, project_name: str, deploy_type: DeploymentType =
             json.dump(minimal_pkg, f, indent=2)
         
         # Install dependencies
-        subprocess.run(["npm", "install"], cwd=app_dir, shell=True, capture_output=True)
+        if log_file:
+            log_file.write("DEBUG: package.json created, running 'npm install'...\n")
+            log_file.flush()
+        subprocess.run(["npm", "install"], cwd=app_dir, shell=True, stdout=log_file if log_file else subprocess.PIPE, stderr=log_file if log_file else subprocess.PIPE)
 
     if deploy_type == DeploymentType.HARDHAT:
         # ── Step A: Inject QIE Network ──
@@ -82,14 +111,11 @@ def deploy_to_qie(app_dir: str, project_name: str, deploy_type: DeploymentType =
                 return False, "scripts/ folder not found"
 
         env = {**os.environ, "PRIVATE_KEY": deployer_key, "HARDHAT_DISABLE_TELEMETRY": "true"}
-        result = subprocess.run(
-            ["npx", "--yes", "hardhat", "run", script_path, "--network", "qie"],
-            cwd=app_dir,
-            capture_output=True,
-            text=True,
-            shell=True,
-            env=env
-        )
+        cmd = ["npx", "--yes", "hardhat", "run", script_path, "--network", "qie"]
+        
+        returncode, output = run_and_stream(cmd, app_dir, env, log_file)
+        if returncode != 0:
+            return False, output or "Hardhat command failed"
     elif deploy_type == DeploymentType.FOUNDRY:
         # For Foundry, we look for any .sol in src/
         src_dir = os.path.join(app_dir, "src")
@@ -105,23 +131,17 @@ def deploy_to_qie(app_dir: str, project_name: str, deploy_type: DeploymentType =
         # Foundry 'forge create' requires the contract name
         contract_name = contract_to_deploy.replace(".sol", "")
         
-        result = subprocess.run(
-            ["forge", "create", f"src/{contract_to_deploy}:{contract_name}", 
-             "--rpc-url", "https://rpc-main1.qiblockchain.online",
-             "--private-key", deployer_key,
-             "--legacy"], # QIE often prefers legacy transactions
-            cwd=app_dir,
-            capture_output=True,
-            text=True
-        )
+        cmd = ["forge", "create", f"src/{contract_to_deploy}:{contract_name}", 
+              "--rpc-url", "https://rpc-main1.qiblockchain.online",
+              "--private-key", deployer_key,
+              "--legacy"]
+        
+        returncode, output = run_and_stream(cmd, app_dir, os.environ, log_file)
+        if returncode != 0:
+            return False, output or "Forge create failed"
     else:
         return False, f"Deployment not supported for {deploy_type}"
 
-    if result.returncode != 0:
-        return False, result.stderr or result.stdout
-
-    # ── Step C: Parse Address ──
-    output = result.stdout
     matches = re.findall(r"0x[a-fA-F0-9]{40}", output)
     if matches:
         return True, matches[-1]

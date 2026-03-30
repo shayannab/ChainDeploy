@@ -72,7 +72,8 @@ function ScatteredTech() {
   )
 }
 
-function DeploymentCard({ deployment, onDeleteRequest, onSelect }) {
+function DeploymentCard(props) {
+  const { deployment, onDeleteRequest, onSelect } = props
   const [liveStatus, setLiveStatus] = useState(deployment.status)
   const isBuilding = liveStatus === 'BUILDING'
   
@@ -81,7 +82,8 @@ function DeploymentCard({ deployment, onDeleteRequest, onSelect }) {
     if (liveStatus === 'BUILDING') {
       const interval = setInterval(async () => {
         try {
-          const res = await axios.get(`/api/deployments/${deployment.id}/status`)
+          const config = props.token ? { headers: { Authorization: `Bearer ${props.token}` } } : {}
+          const res = await axios.get(`/api/deployments/${deployment.id}/status`, config)
           setLiveStatus(res.data.status.toUpperCase())
         } catch (err) { console.error('Card status fail:', err) }
       }, 3000)
@@ -126,13 +128,18 @@ function DeploymentCard({ deployment, onDeleteRequest, onSelect }) {
   )
 }
 
-function ProjectDetails({ project, onBack, onDelete }) {
+function ProjectDetails(props) {
+  const { project, onBack, onDelete } = props
   const [logs, setLogs] = useState([])
   const [liveStatus, setLiveStatus] = useState(project.status)
   
   // ── Live Logs (SSE) ──────────────────────────────────────
   useEffect(() => {
-    const eventSource = new EventSource(`/api/deployments/${project.id}/stream-logs`)
+    const url = props.token 
+      ? `/api/deployments/${project.id}/stream-logs?token=${props.token}`
+      : `/api/deployments/${project.id}/stream-logs`;
+    
+    const eventSource = new EventSource(url)
     
     eventSource.onmessage = (event) => {
       setLogs(prev => [...prev.slice(-100), event.data]) // Keep last 100 lines
@@ -144,13 +151,14 @@ function ProjectDetails({ project, onBack, onDelete }) {
     }
     
     return () => eventSource.close()
-  }, [project.id])
+  }, [project.id, props.token])
 
   // ── Live Status Polling ──────────────────────────────────
   useEffect(() => {
     const checkStatus = async () => {
       try {
-        const res = await axios.get(`/api/deployments/${project.id}/status`)
+        const config = props.token ? { headers: { Authorization: `Bearer ${props.token}` } } : {}
+        const res = await axios.get(`/api/deployments/${project.id}/status`, config)
         setLiveStatus(res.data.status.toUpperCase())
       } catch (err) {
         console.error('Status check fail:', err)
@@ -158,7 +166,7 @@ function ProjectDetails({ project, onBack, onDelete }) {
     }
     const interval = setInterval(checkStatus, 3000) // Every 3s
     return () => clearInterval(interval)
-  }, [project.id])
+  }, [project.id, props.token])
 
   const typeInfo = TYPE_CONFIG[project.deploy_type] || { label: project.deploy_type, cls: 'static', icon: '📦' }
 
@@ -209,16 +217,23 @@ function ProjectDetails({ project, onBack, onDelete }) {
               {project.contract_address && (
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span style={{ color: 'var(--text-secondary)' }}>Contract</span>
-                  <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem', color: 'var(--primary)' }}>
-                    {project.contract_address.slice(0, 10)}...{project.contract_address.slice(-6)}
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem', color: 'var(--primary)' }}>
+                      {project.contract_address.slice(0, 10)}...{project.contract_address.slice(-6)}
+                    </span>
+                    <button className="util-btn-sm" onClick={() => { navigator.clipboard.writeText(project.contract_address); alert('Copied!'); }}><IconCopy /></button>
+                  </div>
                 </div>
               )}
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ color: 'var(--text-secondary)' }}>URL / Explorer</span>
-                <a href={project.url} target="_blank" rel="noreferrer" style={{ color: 'var(--primary)', fontFamily: 'var(--font-mono)', fontSize: '0.8rem' }}>
-                  {project.url.includes('qiescan') ? 'View on QieScan' : project.url}
-                </a>
+                {project.url ? (
+                  <a href={project.url} target="_blank" rel="noreferrer" style={{ color: 'var(--primary)', fontFamily: 'var(--font-mono)', fontSize: '0.8rem' }}>
+                    {project.url.includes('qiescan') ? 'View on QieScan' : project.url}
+                  </a>
+                ) : (
+                  <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>Generating...</span>
+                )}
               </div>
               <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                 <span style={{ color: 'var(--text-secondary)' }}>Container ID</span>
@@ -385,14 +400,15 @@ export default function Home() {
         headers: { 'Content-Type': 'multipart/form-data' }
       })
       
-      if (res.data.status === 'SUCCESS' && res.data.contract_address) {
-        setStatus({ type: 'success', msg: `🚀 Contract Deployed: ${res.data.contract_address.slice(0, 10)}...` })
-      } else {
-        setStatus({ type: 'success', msg: `🚀 Deployed to ${res.data.url}` })
-      }
+      // ── Instant Transition ──
+      // The backend now returns immediately with the project ID.
+      // We set the selected project so the user sees the terminal right away!
+      const newProject = res.data
+      setDeployments(prev => [newProject, ...prev])
+      setSelectedProject(newProject)
       
       setFile(null); setProjectName('')
-      fetchDeployments()
+      setStatus(null) // Clear the big banner since we're in technical view now
     } catch (err) {
       if (err.response?.status === 401) clearAuth()
       setStatus({ type: 'error', msg: err.response?.data?.detail || 'Deployment failed.' })
@@ -407,7 +423,12 @@ export default function Home() {
   if (selectedProject) {
     return (
       <>
-        <ProjectDetails project={selectedProject} onBack={() => setSelectedProject(null)} onDelete={handleDelete} />
+        <ProjectDetails 
+          project={selectedProject} 
+          token={token}
+          onBack={() => setSelectedProject(null)} 
+          onDelete={handleDelete} 
+        />
         <ConfirmationModal 
           isOpen={isModalOpen} 
           onCancel={() => setIsModalOpen(false)} 
@@ -547,20 +568,32 @@ export default function Home() {
                   <label>PROJECT NAME</label>
                   <input type="text" placeholder="my-awesome-dapp" value={projectName} onChange={e => setProjectName(e.target.value)} />
                 </div>
-                <div className="form-group" style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <input 
-                    type="checkbox" 
-                    id="fork-mode" 
-                    checked={isFork} 
-                    onChange={e => setIsFork(e.target.checked)} 
-                    style={{ width: '20px', height: '20px', accentColor: 'var(--primary)' }}
-                  />
-                  <label htmlFor="fork-mode" style={{ margin: 0, fontSize: '0.85rem', cursor: 'pointer' }}>
-                    🚀 SIMULATION MODE (FREE)
-                  </label>
+                <div className="form-group" style={{ flex: 1.5 }}>
+                  <label>DEPLOYMENT MODE</label>
+                  <select 
+                    value={isFork ? "fork" : "mainnet"} 
+                    onChange={e => setIsFork(e.target.value === "fork")}
+                    style={{ padding: '12px', borderRadius: '12px', border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', width: '100%' }}
+                  >
+                    <option value="fork">🚀 Simulator (Free)</option>
+                    <option value="mainnet">🌏 QIE Mainnet</option>
+                  </select>
                 </div>
-                <button className="btn-deploy" onClick={handleDeploy} disabled={loading || !file} style={{ flex: 1 }}>
-                  {loading ? 'Processing...' : 'DEPLOY PROJECT'}
+                <button 
+                  className={`btn-deploy ${!isFork ? 'mainnet-deploy-active' : ''}`} 
+                  onClick={() => {
+                    if (!isFork) {
+                      if (window.confirm("You are about to deploy to QIE Mainnet. This will use the platform's gas. Are you sure?")) {
+                        handleDeploy();
+                      }
+                    } else {
+                      handleDeploy();
+                    }
+                  }} 
+                  disabled={loading || !file} 
+                  style={{ flex: 1, height: '48px', marginTop: '18px' }}
+                >
+                  {loading ? 'Processing...' : (isFork ? 'DEPLOY PROJECT' : 'SHIP TO MAINNET')}
                 </button>
               </div>
               {status && <div className={`status-banner ${status.type}`} style={{ marginTop: '20px' }}>{status.msg}</div>}
@@ -576,6 +609,7 @@ export default function Home() {
                   <DeploymentCard 
                     key={d.id} 
                     deployment={d} 
+                    token={token}
                     onDeleteRequest={handleDeleteRequest} 
                     onSelect={setSelectedProject} 
                   />

@@ -6,7 +6,7 @@ from typing import Optional
 from eth_account.messages import encode_defunct
 from eth_account import Account
 from jose import JWTError, jwt
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status, Query
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.orm import Session
 
@@ -19,7 +19,7 @@ SECRET_KEY = os.getenv("SECRET_KEY", "chaindeploy_super_secret_key_12345")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 7 days for ease of use
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/verify")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/auth/verify", auto_error=False)
 
 # ── SIWE Utilities ────────────────────────────────────────
 def generate_nonce() -> str:
@@ -54,16 +54,23 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
 
 # ── FastAPI Dependencies ──────────────────────────────────
 async def get_current_user(
-    token: str = Depends(oauth2_scheme),
+    token: Optional[str] = Query(None),
+    header_token: str = Depends(oauth2_scheme),
     db: Session = Depends(database.get_db)
 ) -> models.User:
+    actual_token = token or header_token
+    
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
         headers={"WWW-Authenticate": "Bearer"},
     )
+    
+    if not actual_token:
+        raise credentials_exception
+
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(actual_token, SECRET_KEY, algorithms=[ALGORITHM])
         address: str = payload.get("sub")
         if address is None:
             raise credentials_exception
