@@ -16,11 +16,8 @@ import zipfile
 import shutil
 import subprocess
 import tempfile
+from datetime import datetime, timedelta
 import json
-from datetime import datetime
-# ── Force Disable Hardhat Telemetry globally ─────────────
-os.environ["HARDHAT_DISABLE_TELEMETRY"] = "true"
-
 from fastapi import FastAPI, UploadFile, File, Form, Depends, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -162,6 +159,45 @@ def compile_project(app_dir: str, deploy_type: models.DeploymentType, log_file=N
     return True, ""
 
 
+def extract_abi(app_dir: str, deploy_type: models.DeploymentType) -> str:
+    """
+    Search for ABI in Hardhat (artifacts/) or Foundry (out/) and return it as a JSON string.
+    """
+    try:
+        abi_list = []
+        if deploy_type == models.DeploymentType.HARDHAT:
+            artifacts_dir = os.path.join(app_dir, "artifacts", "contracts")
+            if os.path.exists(artifacts_dir):
+                for root, _, files in os.walk(artifacts_dir):
+                    for file in files:
+                        if file.endswith(".json") and not file.endswith(".dbg.json"):
+                            with open(os.path.join(root, file), "r", encoding="utf-8") as f:
+                                data = json.load(f)
+                                if isinstance(data, dict) and "abi" in data and data["abi"]:
+                                    abi_list.append(data["abi"])
+
+        elif deploy_type == models.DeploymentType.FOUNDRY:
+            out_dir = os.path.join(app_dir, "out")
+            if os.path.exists(out_dir):
+                for root, _, files in os.walk(out_dir):
+                    for file in files:
+                        if file.endswith(".json"):
+                            with open(os.path.join(root, file), "r", encoding="utf-8") as f:
+                                data = json.load(f)
+                                if isinstance(data, dict) and "abi" in data and data["abi"]:
+                                    abi_list.append(data["abi"])
+
+        if abi_list:
+            # Simple heuristic: the largest ABI is probably the primary contract
+            primary_abi = max(abi_list, key=len)
+            return json.dumps(primary_abi)
+            
+    except Exception as e:
+        print(f"DEBUG: ABI extraction failed: {e}")
+    
+    return ""
+
+
 # ─────────────────────────────────────────────────────────
 # ROUTE 1: Health check
 # ─────────────────────────────────────────────────────────
@@ -211,7 +247,12 @@ def verify(
     user.nonce = None
     db.commit()
     
-    access_token = auth.create_access_token(data={"sub": user.address})
+    # ── Fixed 401 Bug: Use 7-day expiration ──
+    access_token_expires = timedelta(minutes=auth.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token = auth.create_access_token(
+        data={"sub": user.address}, 
+        expires_delta=access_token_expires
+    )
     return {"access_token": access_token, "token_type": "bearer"}
 
 
@@ -242,9 +283,28 @@ async def deploy_app(
         contents = await file.read()
         f.write(contents)
 
-    # ── Step 4: Extract ZIP ──
+    # ── Step 4: Extract ZIP (Securely) ──
     try:
+        def is_within_directory(directory, target):
+            abs_directory = os.path.abspath(directory)
+            abs_target = os.path.abspath(target)
+            prefix = os.path.commonprefix([abs_directory, abs_target])
+            return prefix == abs_directory
+
+        def safe_extract(tar, path=".", members=None, *, numeric_owner=False):
+            for member in tar.getmembers():
+                member_path = os.path.join(path, member.name)
+                if not is_within_directory(path, member_path):
+                    raise Exception("Attempted Path Traversal in ZIP")
+            tar.extractall(path, members, numeric_owner=numeric_owner)
+
         with zipfile.ZipFile(zip_path, "r") as zip_ref:
+            # zip_ref.extractall doesn't have the same members check as tarfile easily
+            # but we can do it manually for each file
+            for member in zip_ref.namelist():
+                member_path = os.path.join(app_dir, member)
+                if not is_within_directory(app_dir, member_path):
+                    raise Exception("Attempted Path Traversal in ZIP")
             zip_ref.extractall(app_dir)
         os.remove(zip_path)
 
@@ -342,6 +402,17 @@ def run_deployment_task(deployment_id: int, app_id: str, app_dir: str, project_n
                     log_file.write(f"❌ Compilation Failed: {error_msg}\n")
                     db.close()
                     return
+                
+                # ── Step 0.1: Extract ABI ──
+                log_file.write("📦 Extracting contract ABI...\n")
+                abi_json = extract_abi(app_dir, deploy_type)
+                if abi_json:
+                    deployment.abi = abi_json
+                    db.commit()
+                    log_file.write("✅ ABI extracted successfully.\n")
+                else:
+                    log_file.write("⚠️ No ABI found in build artifacts.\n")
+                log_file.flush()
 
             # ── Step A: Direct Mainnet Deployment ──
             SC_TYPES = [models.DeploymentType.HARDHAT, models.DeploymentType.FOUNDRY]
@@ -546,20 +617,23 @@ def stream_logs(
     if not deployment:
         raise HTTPException(status_code=404, detail="Deployment not found")
         
-    if not deployment.container_id:
-        def build_log_generator():
-            log_path = os.path.join("logs", f"build_{deployment_id}.log")
-            if not os.path.exists(log_path):
-                yield "data: Preparing build environment...\n\n"
-                return
-            
+    def unified_log_generator():
+        """
+        One generator to rule them all: 
+        1. Reads build logs from file until container is ready.
+        2. Seamlessly switches to docker logs --follow.
+        """
+        log_path = os.path.join("logs", f"build_{deployment_id}.log")
+        sent_build_logs = False
+        
+        # ── Phase 1: Build Logs ──
+        if os.path.exists(log_path):
             with open(log_path, "r", encoding="utf-8") as f:
-                # First, send everything written so far
-                lines = f.readlines()
-                for line in lines:
+                # Catch up on what's already there
+                for line in f:
                     yield f"data: {line}\n\n"
                 
-                # Then, keep polling for new lines until container is ready or build fails
+                # Keep polling the build file until the container is ready
                 import time
                 while True:
                     line = f.readline()
@@ -570,25 +644,36 @@ def stream_logs(
                         if deployment.container_id or deployment.status in ["RUNNING", "FAILED"]:
                             break
                         time.sleep(0.5)
-        
-        return StreamingResponse(build_log_generator(), media_type="text/event-stream")
+            sent_build_logs = True
 
-    def log_generator():
-        process = subprocess.Popen(
-            ["docker", "logs", "--follow", "--tail", "100", deployment.container_id],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            shell=True
-        )
-        try:
-            for line in iter(process.stdout.readline, ""):
-                yield f"data: {line}\n\n"
-        finally:
-            process.terminate()
-            process.wait()
+        # ── Phase 2: Switch to Docker Logs ──
+        db.refresh(deployment)
+        if deployment.container_id:
+            if sent_build_logs:
+                yield "data: 🚀 Deployment Live! Switching to app logs...\n\n"
+            
+            # Use encoding='utf-8' and errors='replace' for robustness on Windows
+            process = subprocess.Popen(
+                ["docker", "logs", "--follow", "--tail", "0", deployment.container_id],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                shell=True
+            )
+            try:
+                for line in iter(process.stdout.readline, ""):
+                    yield f"data: {line}\n\n"
+            finally:
+                process.terminate()
+                process.wait()
+        elif deployment.status == "FAILED":
+             yield f"data: ❌ Build Failed: {deployment.error}\n\n"
+        else:
+             yield "data: ⌛ Waiting for build to start...\n\n"
 
-    return StreamingResponse(log_generator(), media_type="text/event-stream")
+    return StreamingResponse(unified_log_generator(), media_type="text/event-stream")
 
 # ─────────────────────────────────────────────────────────
 # ROUTE 7: Classic Logs

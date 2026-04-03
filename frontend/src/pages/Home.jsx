@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import axios from 'axios'
-import { Hammer, Wrench, Package, Atom, Code, FileCode, Globe, Sparkles, FolderArchive, ScanSearch, Zap, MapPin, Rocket, ShieldCheck, Lock } from 'lucide-react'
+import { Hammer, Wrench, Package, Atom, Code, FileCode, Globe, Sparkles, FolderArchive, ScanSearch, Zap, MapPin, Rocket, ShieldCheck, Lock, Activity, Terminal } from 'lucide-react'
 import { useAccount, useSignMessage } from 'wagmi'
 import { ConnectButton } from '@rainbow-me/rainbowkit'
+
+import ContractInteractor from '../components/ContractInteractor'
 
 // ── Icons (Simplified) ──────────────────────────────────────
 const IconCopy = () => <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
@@ -38,12 +39,11 @@ const TYPE_CONFIG = {
 }
 
 const SCATTERED_TECH = [
-  { name: 'Python', icon: 'https://api.iconify.design/logos:python.svg', top: '8%', left: '8%', rot: '-8deg' },
+  { name: 'Hardhat', icon: 'https://api.iconify.design/logos:hardhat-icon.svg', top: '8%', left: '8%', rot: '-8deg' },
   { name: 'Foundry', icon: 'https://avatars.githubusercontent.com/u/98050634?s=200&v=4', top: '15%', right: '10%', rot: '6deg', style: { borderRadius: '16px' } },
-  { name: 'React', icon: 'https://api.iconify.design/logos:react.svg', bottom: '15%', left: '10%', rot: '5deg' },
-  { name: 'Rust', icon: 'https://api.iconify.design/logos:rust.svg', bottom: '20%', right: '8%', rot: '-7deg', style: { filter: 'drop-shadow(0 0 2px rgba(255,255,255,0.4))' } },
-  { name: 'Node.js', icon: 'https://api.iconify.design/logos:nodejs-icon.svg', top: '48%', left: '5%', rot: '-4deg' },
-  { name: 'Go', icon: 'https://api.iconify.design/logos:go.svg', top: '52%', right: '5%', rot: '10deg' },
+  { name: 'Solidity', icon: 'https://api.iconify.design/logos:solidity.svg', bottom: '15%', left: '10%', rot: '5deg' },
+  { name: 'Metamask', icon: 'https://api.iconify.design/logos:metamask-icon.svg', top: '48%', left: '5%', rot: '-4deg' },
+  { name: 'Ethereum', icon: 'https://api.iconify.design/logos:ethereum.svg', top: '52%', right: '5%', rot: '10deg' },
 ]
 
 const statusClass = (s) => {
@@ -82,9 +82,11 @@ function DeploymentCard(props) {
     if (liveStatus === 'BUILDING') {
       const interval = setInterval(async () => {
         try {
-          const config = props.token ? { headers: { Authorization: `Bearer ${props.token}` } } : {}
-          const res = await axios.get(`/api/deployments/${deployment.id}/status`, config)
-          setLiveStatus(res.data.status.toUpperCase())
+          const headers = props.token ? { Authorization: `Bearer ${props.token}` } : {}
+          const res = await fetch(`/api/deployments/${deployment.id}/status`, { headers })
+          if (!res.ok) throw new Error('Status check failed')
+          const data = await res.json()
+          setLiveStatus(data.status.toUpperCase())
         } catch (err) { console.error('Card status fail:', err) }
       }, 3000)
       return () => clearInterval(interval)
@@ -157,9 +159,11 @@ function ProjectDetails(props) {
   useEffect(() => {
     const checkStatus = async () => {
       try {
-        const config = props.token ? { headers: { Authorization: `Bearer ${props.token}` } } : {}
-        const res = await axios.get(`/api/deployments/${project.id}/status`, config)
-        setLiveStatus(res.data.status.toUpperCase())
+        const headers = props.token ? { Authorization: `Bearer ${props.token}` } : {}
+        const res = await fetch(`/api/deployments/${project.id}/status`, { headers })
+        if (!res.ok) throw new Error('Status check failed')
+        const data = await res.json()
+        setLiveStatus(data.status.toUpperCase())
       } catch (err) {
         console.error('Status check fail:', err)
       }
@@ -204,6 +208,16 @@ function ProjectDetails(props) {
               })}
             </div>
           </div>
+
+          {(project.abi && project.contract_address) && (
+            <div className="details-card" style={{ marginTop: '24px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '16px' }}>
+                <Activity size={20} className="highlight-cyan" />
+                <h3 style={{ margin: 0 }}>Contract Interaction</h3>
+              </div>
+              <ContractInteractor deployment={project} />
+            </div>
+          )}
         </div>
 
         <div className="details-sidebar">
@@ -229,7 +243,7 @@ function ProjectDetails(props) {
                 <span style={{ color: 'var(--text-secondary)' }}>URL / Explorer</span>
                 {project.url ? (
                   <a href={project.url} target="_blank" rel="noreferrer" style={{ color: 'var(--primary)', fontFamily: 'var(--font-mono)', fontSize: '0.8rem' }}>
-                    {project.url.includes('qiescan') ? 'View on QieScan' : project.url}
+                    {project.url.includes('qie.digital') ? 'View on QieScan' : project.url}
                   </a>
                 ) : (
                   <span style={{ color: 'var(--text-muted)', fontStyle: 'italic' }}>Generating...</span>
@@ -295,7 +309,9 @@ export default function Home() {
     setIsAuthenticating(true)
     try {
       // 1. Get nonce
-      const { data: { nonce } } = await axios.post(`/api/auth/nonce?address=${address}`)
+      const resNonce = await fetch(`/api/auth/nonce?address=${address}`, { method: 'POST' })
+      if (!resNonce.ok) throw new Error('Failed to get nonce')
+      const { nonce } = await resNonce.json()
       
       // 2. Sign message
       const message = `Sign this message to authenticate with ChainDeploy: ${nonce}`
@@ -306,7 +322,12 @@ export default function Home() {
       formData.append('address', address)
       formData.append('signature', signature)
       
-      const { data: { access_token } } = await axios.post('/api/auth/verify', formData)
+      const resVerify = await fetch('/api/auth/verify', {
+        method: 'POST',
+        body: formData
+      })
+      if (!resVerify.ok) throw new Error('Verification failed')
+      const { access_token } = await resVerify.json()
       
       // 4. Save token
       localStorage.setItem('cd_token', access_token)
@@ -332,24 +353,24 @@ export default function Home() {
       setDeployments([])
     }
   }, [isConnected])
-
-  // Setup axios with token
-  const api = axios.create({
-    headers: token ? { Authorization: `Bearer ${token}` } : {}
-  })
-
+  
   useEffect(() => { 
     if (token) fetchDeployments() 
   }, [token])
 
   const fetchDeployments = async () => {
     try {
-      const res = await api.get('/api/deployments')
-      setDeployments(res.data)
+      const headers = token ? { Authorization: `Bearer ${token}` } : {}
+      const res = await fetch('/api/deployments', { headers })
+      if (!res.ok) {
+        if (res.status === 401) clearAuth()
+        throw new Error('Failed to fetch deployments')
+      }
+      const data = await res.json()
+      setDeployments(data)
       setAuthError(false)
     } catch (err) { 
       console.error('Fetch error:', err)
-      if (err.response?.status === 401) clearAuth()
     }
   }
 
@@ -361,7 +382,12 @@ export default function Home() {
   const handleDeleteConfirm = async () => {
     if (!deleteTargetId) return
     try {
-      await api.delete(`/api/deployments/${deleteTargetId}`)
+      const headers = token ? { Authorization: `Bearer ${token}` } : {}
+      const res = await fetch(`/api/deployments/${deleteTargetId}`, {
+        method: 'DELETE',
+        headers
+      })
+      if (!res.ok) throw new Error('Delete failed')
       setDeployments(prev => prev.filter(d => d.id !== deleteTargetId))
       if (selectedProject?.id === deleteTargetId) setSelectedProject(null)
     } catch (err) {
@@ -396,22 +422,28 @@ export default function Home() {
     formData.append('is_fork', isFork ? 'true' : 'false')
 
     try {
-      const res = await api.post('/api/deploy', formData, {
-        headers: { 'Content-Type': 'multipart/form-data' }
+      const headers = token ? { Authorization: `Bearer ${token}` } : {}
+      const res = await fetch('/api/deploy', { 
+        method: 'POST',
+        headers, 
+        body: formData
       })
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}))
+        if (res.status === 401) clearAuth()
+        throw new Error(errorData.detail || 'Deployment failed.')
+      }
       
-      // ── Instant Transition ──
-      // The backend now returns immediately with the project ID.
-      // We set the selected project so the user sees the terminal right away!
-      const newProject = res.data
+      const newProject = await res.json()
       setDeployments(prev => [newProject, ...prev])
       setSelectedProject(newProject)
       
       setFile(null); setProjectName('')
       setStatus(null) // Clear the big banner since we're in technical view now
     } catch (err) {
-      if (err.response?.status === 401) clearAuth()
-      setStatus({ type: 'error', msg: err.response?.data?.detail || 'Deployment failed.' })
+      // With fetch, we handle 401 in the response check above.
+      // Generic catch for network or parsing errors.
+      setStatus({ type: 'error', msg: err.message || 'Deployment failed.' })
     } finally { setLoading(false) }
   }
 
@@ -449,11 +481,11 @@ export default function Home() {
             <Sparkles size={14} style={{ color: 'var(--primary)', marginRight: '4px' }} /> The Web3 Deployment Platform
           </div>
           <h1>
-            Ship <span className="highlight-cyan">dApps</span> in minutes,<br />
-            not <span className="highlight-orange">weeks</span>.
+            The All-in-One <span className="highlight-cyan">Smart Contract</span><br />
+             Sandbox & <span className="highlight-orange">Deployment</span> Platform
           </h1>
           <p>
-            Stop wrestling with infrastructure. chainDeploy turns your code into a production-grade, deployment-ready dApp in one click.
+            Zero-config deployments for Hardhat, Foundry, and beyond. Simulate locally with a one-click Anvil fork, and interact with your contracts immediately using our auto-parsed ABI UI.
           </p>
           <div style={{ display: 'flex', gap: '16px', justifyContent: 'center' }}>
             <button className="btn-deploy" onClick={() => document.getElementById('dashboard').scrollIntoView({ behavior: 'smooth' })}>
@@ -468,21 +500,26 @@ export default function Home() {
           <div className="hero-eyebrow" style={{ marginBottom: '16px' }}>How it works</div>
           <h2 style={{ margin: 0 }}>(it's stupidly easy)</h2>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '32px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '24px' }}>
           <div className="details-card">
             <div style={{ color: 'var(--primary)', marginBottom: '16px' }}><FolderArchive size={32} /></div>
             <h3>1. Zip & Drop</h3>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Compress your project. Drag it in. We take it from there.</p>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Compress your Hardhat or Foundry project and drag it in. Our engine handles the rest.</p>
           </div>
           <div className="details-card">
             <div style={{ color: 'var(--primary)', marginBottom: '16px' }}><ScanSearch size={32} /></div>
             <h3>2. Auto-Detect</h3>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>We scan your codebase and spin up the perfect Docker build automatically. Node, Python, Rust, Go—we know them all.</p>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>We scan your codebase and spin up the perfect Docker container automatically—no configuration required.</p>
           </div>
           <div className="details-card">
-            <div style={{ color: 'var(--primary)', marginBottom: '16px' }}><Zap size={32} /></div>
-            <h3>3. Instant Live</h3>
-            <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Your dApp is live instantly on our high-speed cloud. mTLS, SSL, DDoS protection are on the roadmap.</p>
+            <div style={{ color: 'var(--primary)', marginBottom: '16px' }}><Activity size={32} /></div>
+            <h3>3. Simulator Mode</h3>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Test risk-free with an instant Anvil fork of QIE Mainnet. Real state, zero cost, total control.</p>
+          </div>
+          <div className="details-card">
+            <div style={{ color: 'var(--primary)', marginBottom: '16px' }}><Terminal size={32} /></div>
+            <h3>4. Instant Interact</h3>
+            <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem' }}>Automatic ABI parsing provides a dynamic UI to call functions immediately after deployment.</p>
           </div>
         </div>
       </section>
@@ -495,24 +532,24 @@ export default function Home() {
         <div style={{ maxWidth: '800px', margin: '0 auto', display: 'grid', gap: '24px' }}>
           <div className="roadmap-item" style={{ padding: '24px', borderRadius: '16px', border: '1px solid var(--border)', background: 'var(--bg-secondary)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <h4 style={{ margin: 0, color: 'var(--primary)' }}>Local Simulation Mode</h4>
+              <span className="status-badge" style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '100px', border: '1px solid var(--accent-green)', color: 'var(--accent-green)' }}>LIVE</span>
+            </div>
+            <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.9rem' }}>Spin up instant Anvil forks for risk-free testing with real mainnet state.</p>
+          </div>
+          <div className="roadmap-item" style={{ padding: '24px', borderRadius: '16px', border: '1px solid var(--border)', background: 'var(--bg-secondary)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+              <h4 style={{ margin: 0, color: 'var(--primary)' }}>Instant ABI Interaction</h4>
+              <span className="status-badge" style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '100px', border: '1px solid var(--accent-green)', color: 'var(--accent-green)' }}>LIVE</span>
+            </div>
+            <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.9rem' }}>Automatic ABI parsing generates a dynamic UI to interact with your contracts instantly.</p>
+          </div>
+          <div className="roadmap-item" style={{ padding: '24px', borderRadius: '16px', border: '1px solid var(--border)', background: 'var(--bg-secondary)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
               <h4 style={{ margin: 0, color: 'var(--primary)' }}>Global Edge Network</h4>
-              <span className="status-badge" style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '100px', border: '1px solid var(--primary)', color: 'var(--primary)' }}>UPCOMING</span>
+              <span className="status-badge" style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '100px', border: '1px solid var(--primary)', color: 'var(--primary)' }}>IN PROGRESS</span>
             </div>
             <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.9rem' }}>Deploying to 20+ regions worldwide for sub-100ms latency globally.</p>
-          </div>
-          <div className="roadmap-item" style={{ padding: '24px', borderRadius: '16px', border: '1px solid var(--border)', background: 'var(--bg-secondary)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-              <h4 style={{ margin: 0, color: 'var(--primary)' }}>Advanced Security Guard</h4>
-              <span className="status-badge" style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '100px', border: '1px solid var(--primary)', color: 'var(--primary)' }}>PLANNING</span>
-            </div>
-            <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.9rem' }}>Automated mTLS, DDoS mitigation, and enterprise-grade SSL management.</p>
-          </div>
-          <div className="roadmap-item" style={{ padding: '24px', borderRadius: '16px', border: '1px solid var(--border)', background: 'var(--bg-secondary)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-              <h4 style={{ margin: 0, color: 'var(--primary)' }}>Unified CLI Tool</h4>
-              <span className="status-badge" style={{ fontSize: '0.7rem', padding: '2px 8px', borderRadius: '100px', border: '1px solid var(--primary)', color: 'var(--primary)' }}>IN DEV</span>
-            </div>
-            <p style={{ margin: 0, color: 'var(--text-muted)', fontSize: '0.9rem' }}>Deploy directly from your terminal with a single command.</p>
           </div>
         </div>
       </section>

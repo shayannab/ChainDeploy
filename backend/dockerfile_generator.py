@@ -30,17 +30,47 @@ def _wrap_with_fork(dockerfile: str, container_port: int, deploy_type: Deploymen
     is_pure_node = any(nc in orig_cmd for nc in ["hardhat node", "anvil", "truffle develop"])
     new_port = 8080 if (is_pure_node or deploy_type in (DeploymentType.HARDHAT, DeploymentType.FOUNDRY)) else container_port
 
-    # ── Script Building (Plain Text) ──
+    # ── Script Building (3-Tier Resilient sim.sh) ──
     script_lines = [
         "#!/bin/sh",
-        "echo '🚀 Starting Anvil Fork...'",
-        "anvil --host 0.0.0.0 --fork-url https://rpc-main1.qiblockchain.online --port 8545 &",
-        "sleep 5",
+        "export LANG=C.UTF-8",
+        "echo '🌐 Initializing QIE Simulation...'",
+        "",
+        "RPC1='https://5656.rpc.thirdweb.com'",
+        "RPC2='https://rpc-main1.qiblockchain.online'",
+        "",
+        "# Tier 1: Try Thirdweb fork",
+        "echo \"🚀 Trying QIE Fork (Thirdweb)...\"",
+        "anvil --host 0.0.0.0 --fork-url \"$RPC1\" --port 8545 --fork-retry-backoff 2 2>/tmp/anvil.log &",
+        "ANVIL_PID=$!",
+        "sleep 6",
+        "if nc -z localhost 8545 2>/dev/null; then",
+        "  echo '✅ Forked from QIE via Thirdweb!'",
+        "else",
+        "  # Tier 2: Try native QIE node",
+        "  echo '⚠️ Thirdweb failed. Trying QIE native node...'",
+        "  kill $ANVIL_PID 2>/dev/null; sleep 1",
+        "  anvil --host 0.0.0.0 --fork-url \"$RPC2\" --port 8545 --fork-retry-backoff 2 2>/tmp/anvil.log &",
+        "  ANVIL_PID=$!",
+        "  sleep 6",
+        "  if nc -z localhost 8545 2>/dev/null; then",
+        "    echo '✅ Forked from QIE native node!'",
+        "  else",
+        "    # Tier 3: Local Anvil (always works)",
+        "    echo '⚠️ All forks failed. Starting local Anvil (no mainnet fork)...'",
+        "    kill $ANVIL_PID 2>/dev/null; sleep 1",
+        "    anvil --host 0.0.0.0 --port 8545 --chain-id 5656 &",
+        "    sleep 3",
+        "    echo '✅ Local Anvil Ready! (Chain ID 5656 - QIE compatible)'",
+        "  fi",
+        "fi",
+        "",
+        "while ! nc -z localhost 8545 2>/dev/null; do sleep 1; done",
+        "echo '🔗 Anvil is live on :8545'",
+        "",
     ]
 
     if new_port == 8080:
-        # We use a placeholder '##ADDR##' and Single Quotes for the outer echo.
-        # This is 100% safe from shell quoting errors.
         html_template = (
             '<html><body style=\"background:#0a0a0c;color:#fff;text-align:center;padding:10vh;font-family:sans-serif;\">'
             '<div style=\"background:#111;padding:40px;border-radius:20px;border:1px solid #333;display:inline-block;box-shadow:0 10px 30px rgba(0,0,0,0.5);\">'
@@ -51,18 +81,28 @@ def _wrap_with_fork(dockerfile: str, container_port: int, deploy_type: Deploymen
             '</div></body></html>'
         )
         script_lines += [
-            "echo '📦 Deploying Contracts...'",
-            "(npx hardhat run scripts/*.js --network localhost > log 2>&1 || echo 'No scripts' > log)",
-            "ADDR=$(grep -oE '0x[a-fA-F0-9]{40}' log | tail -n 1)",
+            "echo '📦 Smart Deployment Active...'",
+            "# Try Hardhat, then Foundry patterns",
+            "if [ -d \"scripts\" ]; then",
+            "  npx hardhat run scripts/*.js --network localhost > deploy_log 2>&1",
+            "elif [ -d \"deploy\" ]; then",
+            "  npx hardhat run deploy/*.js --network localhost > deploy_log 2>&1",
+            "elif [ -f \"foundry.toml\" ]; then",
+            "  forge script script/*.s.sol --rpc-url http://localhost:8545 --broadcast > deploy_log 2>&1",
+            "else",
+            "  echo \"No standard script found\" > deploy_log",
+            "fi",
+            "",
+            "# Better ADDR capture: look for last non-zero address",
+            "ADDR=$(grep -oE '0x[a-fA-F0-9]{40}' deploy_log | tail -n 1)",
             f"echo '{html_template}' > /app/index.html",
-            "# Use sed to replace the placeholder with the real address",
             "sed -i \"s/##ADDR##/${ADDR:-Not found}/g\" /app/index.html",
-            "echo '📡 Starting Simulation Dashboard...'",
+            "echo '📡 Starting Dashboard...'",
             "npx -y http-server . -p 8080 -c-1"
         ]
     else:
         script_lines += [
-            f"echo '🌐 Starting Hybrid App: {orig_cmd}'",
+            f"echo '🌐 Starting App: {orig_cmd}'",
             orig_cmd
         ]
 
@@ -72,6 +112,7 @@ def _wrap_with_fork(dockerfile: str, container_port: int, deploy_type: Deploymen
     
     layer = (
         "COPY --from=ghcr.io/foundry-rs/foundry:latest /usr/local/bin/anvil /usr/local/bin/anvil\n"
+        "RUN apt-get update && apt-get install -y netcat-openbsd ca-certificates && rm -rf /var/lib/apt/lists/*\n"
         "ENTRYPOINT []\n"
         f"RUN printf \"{b64_script}\" | base64 -d > /sim.sh && chmod +x /sim.sh\n"
     )
@@ -137,12 +178,15 @@ def generate_dockerfile(deploy_type: DeploymentType, app_dir: str = None, is_for
         is_next = _has_dep(pkg, "next")
         is_vite = _has_dep(pkg, "vite")
         
+        # ── Simulation Pre-reqs ──
+        pre_reqs = "RUN apt-get update && apt-get install -y ca-certificates curl && rm -rf /var/lib/apt/lists/*\n" if is_fork else ""
+        
         if is_next:
-            dockerfile, port = (f"FROM {base_img}\nWORKDIR /app\nCOPY package*.json ./\nRUN npm ci\nCOPY . .\nRUN npm run build\nEXPOSE 3000\nCMD [\"npm\", \"start\"]", 3000)
+            dockerfile, port = (f"FROM {base_img}\nWORKDIR /app\n{pre_reqs}COPY package*.json ./\nRUN npm ci\nCOPY . .\nRUN npm run build\nEXPOSE 3000\nCMD [\"npm\", \"start\"]", 3000)
         elif is_vite:
-            dockerfile, port = (f"FROM {base_img} AS builder\nWORKDIR /app\nCOPY package*.json ./\nRUN npm ci\nCOPY . .\nRUN npm run build\nFROM {base_img}\nWORKDIR /app\nRUN npm install -g serve\nCOPY --from=builder /app/dist ./dist\nEXPOSE 3000\nCMD [\"serve\", \"-s\", \"dist\", \"-l\", \"3000\"]", 3000)
+            dockerfile, port = (f"FROM {base_img} AS builder\nWORKDIR /app\nCOPY package*.json ./\nRUN npm ci\nCOPY . .\nRUN npm run build\nFROM {base_img}\nWORKDIR /app\n{pre_reqs}RUN npm install -g serve\nCOPY --from=builder /app/dist ./dist\nEXPOSE 3000\nCMD [\"serve\", \"-s\", \"dist\", \"-l\", \"3000\"]", 3000)
         else:
-            dockerfile, port = (f"FROM {base_img}\nWORKDIR /app\nCOPY package*.json ./\nRUN npm install\nCOPY . .\nEXPOSE 3000\nCMD [\"npm\", \"start\"]", 3000)
+            dockerfile, port = (f"FROM {base_img}\nWORKDIR /app\n{pre_reqs}COPY package*.json ./\nRUN npm install\nCOPY . .\nEXPOSE 3000\nCMD [\"npm\", \"start\"]", 3000)
 
     # ── Python ────────────────────────────────────────────
     elif deploy_type == DeploymentType.PYTHON:

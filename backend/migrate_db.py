@@ -29,6 +29,18 @@ def migrate():
         cursor.execute("ALTER TABLE deployments ADD COLUMN contract_address TEXT")
         conn.commit()
         print("Migration successful (contract_address)!")
+    except sqlite3.OperationalError:
+        pass
+        
+    try:
+        print("Checking for abi column...")
+        cursor.execute("SELECT abi FROM deployments LIMIT 1")
+        print("Column 'abi' already exists.")
+    except sqlite3.OperationalError:
+        print("Adding column 'abi' to 'deployments' table...")
+        cursor.execute("ALTER TABLE deployments ADD COLUMN abi TEXT")
+        conn.commit()
+        print("Migration successful (abi)!")
     finally:
         conn.close()
 

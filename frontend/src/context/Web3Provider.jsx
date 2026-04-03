@@ -12,14 +12,14 @@ import {
 } from "@tanstack/react-query";
 
 const qie = {
-  id: 5656,
+  id: 1990,
   name: 'QIE Blockchain',
-  nativeCurrency: { name: 'QIE', symbol: 'QIE', decimals: 18 },
+  nativeCurrency: { name: 'QIEV3', symbol: 'QIEV3', decimals: 18 },
   rpcUrls: {
-    default: { http: ['https://rpc-main1.qiblockchain.online'] },
+    default: { http: ['https://rpc1mainnet.qie.digital/'] },
   },
   blockExplorers: {
-    default: { name: 'QIE Explorer', url: 'https://mainnet.qiblockchain.online' },
+    default: { name: 'QIE Explorer', url: 'https://mainnet.qie.digital' },
   },
 };
 

@@ -9,7 +9,7 @@ def run_and_stream(cmd, cwd, env, log_file=None):
     """Runs a command and streams output to log_file while capturing it."""
     stdout_data = []
     
-    # Use Popen to stream
+    # Use Popen to stream — safely handle command list
     process = subprocess.Popen(
         cmd,
         cwd=cwd,
@@ -17,7 +17,7 @@ def run_and_stream(cmd, cwd, env, log_file=None):
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         text=True,
-        shell=True if isinstance(cmd, list) and os.name == 'nt' else (True if isinstance(cmd, str) else False)
+        shell=True if os.name == 'nt' else False
     )
 
     for line in iter(process.stdout.readline, ""):
@@ -70,7 +70,7 @@ def deploy_to_qie(app_dir: str, project_name: str, deploy_type: DeploymentType =
         if log_file:
             log_file.write("DEBUG: package.json created, running 'npm install'...\n")
             log_file.flush()
-        subprocess.run(["npm", "install"], cwd=app_dir, shell=True, stdout=log_file if log_file else subprocess.PIPE, stderr=log_file if log_file else subprocess.PIPE)
+        subprocess.run(["npm", "install"], cwd=app_dir, shell=True if os.name == 'nt' else False, stdout=log_file if log_file else subprocess.PIPE, stderr=log_file if log_file else subprocess.PIPE)
 
     if deploy_type == DeploymentType.HARDHAT:
         # ── Step A: Inject QIE Network ──
@@ -82,8 +82,8 @@ def deploy_to_qie(app_dir: str, project_name: str, deploy_type: DeploymentType =
   if (target) {
     if (!target.networks) target.networks = {};
     target.networks.qie = {
-      url: "https://rpc-main1.qiblockchain.online",
-      chainId: 5656,
+      url: "https://rpc1mainnet.qie.digital/",
+      chainId: 1990,
       accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : []
     };
   }
@@ -132,7 +132,7 @@ def deploy_to_qie(app_dir: str, project_name: str, deploy_type: DeploymentType =
         contract_name = contract_to_deploy.replace(".sol", "")
         
         cmd = ["forge", "create", f"src/{contract_to_deploy}:{contract_name}", 
-              "--rpc-url", "https://rpc-main1.qiblockchain.online",
+              "--rpc-url", "https://rpc1mainnet.qie.digital/",
               "--private-key", deployer_key,
               "--legacy"]
         

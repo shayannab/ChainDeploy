@@ -87,6 +87,9 @@ class Deployment(Base):
     # The raw smart contract address if deployed on mainnet
     contract_address = Column(String, nullable=True)
 
+    # The stringified JSON ABI for smart contract interaction
+    abi              = Column(String, nullable=True)
+
     # Auto-set when the row is created
     created_at   = Column(DateTime, default=datetime.utcnow)
 
